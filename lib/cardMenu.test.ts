@@ -122,6 +122,19 @@ describe('card menu helpers', () => {
       kind: 'SCHEDULE',
       label: '일정 보기',
     });
+    expect(
+      getManagedCardAction(
+        {
+          ...baseCard,
+          status: 'CONFIRMED',
+          candidates: [{ ...baseCard.candidates[0], startsAt: '2026-06-01T19:30:00+09:00' }],
+        },
+        new Date('2026-06-12T12:00:00+09:00'),
+      ),
+    ).toEqual({
+      kind: 'RECREATE',
+      label: '다시 만들기',
+    });
   });
 
   it('builds a share message with title, time, place, optional message, and link', () => {

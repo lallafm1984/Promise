@@ -51,6 +51,14 @@ export default function CreateCardScreen() {
     }),
     [location, message, mode, times],
   );
+  const activeDraft = useMemo<CardDraft>(
+    () => ({
+      ...draft,
+      times: mode === 'DIRECT' ? [times[0] ?? ''] : times,
+    }),
+    [draft, mode, times],
+  );
+  const visibleTimes = mode === 'DIRECT' ? [times[0] ?? ''] : times;
 
   const managedCards = useMemo(() => [...createdCards, ...recentCards], [createdCards, recentCards]);
 
@@ -67,7 +75,7 @@ export default function CreateCardScreen() {
       return;
     }
 
-    setTimes((currentTimes) => [currentTimes[0] ?? '']);
+    setTimes((currentTimes) => (currentTimes.length > 0 ? currentTimes : ['']));
   }
 
   function handleChangeTime(index: number, value: string) {
@@ -100,7 +108,7 @@ export default function CreateCardScreen() {
   }
 
   function handleCreateCard() {
-    const validation = validateCardDraft(draft);
+    const validation = validateCardDraft(activeDraft);
 
     if (!validation.valid) {
       setFeedback(validation.error);
@@ -108,7 +116,7 @@ export default function CreateCardScreen() {
       return;
     }
 
-    setPreviewCard(buildPreviewCard(draft));
+    setPreviewCard(buildPreviewCard(activeDraft));
     setFeedback(null);
   }
 
@@ -128,7 +136,11 @@ export default function CreateCardScreen() {
     }
 
     try {
-      await Share.share({ message: buildShareMessage(previewCard) });
+      const result = await Share.share({ message: buildShareMessage(previewCard) });
+      if (result.action === Share.dismissedAction) {
+        setFeedback('공유가 취소됐어요.');
+        return;
+      }
       publishPreview(previewCard);
       setFeedback('카톡 공유를 열었어요.');
     } catch {
@@ -142,7 +154,7 @@ export default function CreateCardScreen() {
     }
 
     try {
-      await Clipboard.setStringAsync(buildShareMessage(previewCard));
+      await Clipboard.setStringAsync(previewCard.sharedUrl);
       publishPreview(previewCard);
       setFeedback('공유 링크를 복사했어요.');
     } catch {
@@ -153,7 +165,11 @@ export default function CreateCardScreen() {
   async function handleManagedAction(card: PromiseCard, action: ManagedCardActionKind) {
     if (action === 'RESHARE') {
       try {
-        await Share.share({ message: buildShareMessage(card) });
+        const result = await Share.share({ message: buildShareMessage(card) });
+        if (result.action === Share.dismissedAction) {
+          setFeedback('공유가 취소됐어요.');
+          return;
+        }
         setFeedback('공유를 다시 열었어요.');
       } catch {
         setFeedback('공유를 열 수 없어요. 다시 시도해 주세요.');
@@ -193,7 +209,7 @@ export default function CreateCardScreen() {
       <Card style={styles.formCard}>
         <CandidateTimeFields
           mode={mode}
-          times={times}
+          times={visibleTimes}
           onChangeTime={handleChangeTime}
           onAdd={handleAddTime}
           onRemove={handleRemoveTime}

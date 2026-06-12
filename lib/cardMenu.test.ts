@@ -107,6 +107,16 @@ describe('card menu helpers', () => {
         new Date('2026-06-12T12:00:00+09:00'),
       ),
     ).toBe('PAST');
+    expect(
+      getManagedStatusGroup(
+        {
+          ...baseCard,
+          status: 'DECLINED',
+          candidates: [{ ...baseCard.candidates[0], startsAt: '2026-06-01T19:30:00+09:00' }],
+        },
+        new Date('2026-06-12T12:00:00+09:00'),
+      ),
+    ).toBe('PAST');
   });
 
   it('returns exactly one representative action per managed status group', () => {
@@ -144,6 +154,42 @@ describe('card menu helpers', () => {
         '언제: 6월 14일 19:30',
         '어디서: 성수 카페',
         '한마디: 가볍게 한 시간만 보자',
+        'https://whenbollae.app/c/card-test',
+      ].join('\n'),
+    );
+
+    expect(
+      buildShareMessage({
+        ...baseCard,
+        mode: 'POLL',
+        title: '성수 카페에서 언제볼래?',
+        candidates: [
+          baseCard.candidates[0],
+          {
+            ...baseCard.candidates[0],
+            id: 'slot-2',
+            startsAt: '2026-06-15T20:00:00+09:00',
+            endsAt: '2026-06-15T21:00:00+09:00',
+            label: '6월 15일 20:00',
+            shortLabel: '6.15 20:00',
+          },
+        ],
+      }),
+    ).toBe(
+      [
+        '성수 카페에서 언제볼래?',
+        '언제: 6월 14일 19:30 / 6월 15일 20:00',
+        '어디서: 성수 카페',
+        '한마디: 가볍게 한 시간만 보자',
+        'https://whenbollae.app/c/card-test',
+      ].join('\n'),
+    );
+
+    expect(buildShareMessage({ ...baseCard, message: '' })).toBe(
+      [
+        '6월 14일 19:30에 성수 카페에서 볼래?',
+        '언제: 6월 14일 19:30',
+        '어디서: 성수 카페',
         'https://whenbollae.app/c/card-test',
       ].join('\n'),
     );

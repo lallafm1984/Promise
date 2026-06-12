@@ -112,34 +112,52 @@ export default function CreateCardScreen() {
     setFeedback(null);
   }
 
-  async function publishPreview(kind: 'share' | 'copy') {
+  function publishPreview(card: PromiseCard) {
+    const publishedCard: PromiseCard = {
+      ...card,
+      status: card.mode === 'DIRECT' ? 'PENDING' : 'VOTING',
+    };
+
+    setCreatedCards((currentCards) => [publishedCard, ...currentCards.filter((currentCard) => currentCard.id !== card.id)]);
+    setPreviewCard(null);
+  }
+
+  async function handleSharePreview() {
     if (!previewCard) {
       return;
     }
 
-    const shareMessage = buildShareMessage(previewCard);
-
-    if (kind === 'share') {
-      await Share.share({ message: shareMessage });
+    try {
+      await Share.share({ message: buildShareMessage(previewCard) });
+      publishPreview(previewCard);
       setFeedback('카톡 공유를 열었어요.');
-    } else {
-      await Clipboard.setStringAsync(shareMessage);
-      setFeedback('공유 링크를 복사했어요.');
+    } catch {
+      setFeedback('공유를 열 수 없어요. 다시 시도해 주세요.');
+    }
+  }
+
+  async function handleCopyPreviewLink() {
+    if (!previewCard) {
+      return;
     }
 
-    setCreatedCards((currentCards) => [
-      {
-        ...previewCard,
-        status: previewCard.mode === 'DIRECT' ? 'PENDING' : 'VOTING',
-      },
-      ...currentCards,
-    ]);
+    try {
+      await Clipboard.setStringAsync(buildShareMessage(previewCard));
+      publishPreview(previewCard);
+      setFeedback('공유 링크를 복사했어요.');
+    } catch {
+      setFeedback('링크를 복사하지 못했어요. 다시 시도해 주세요.');
+    }
   }
 
   async function handleManagedAction(card: PromiseCard, action: ManagedCardActionKind) {
     if (action === 'RESHARE') {
-      await Share.share({ message: buildShareMessage(card) });
-      setFeedback('공유를 다시 열었어요.');
+      try {
+        await Share.share({ message: buildShareMessage(card) });
+        setFeedback('공유를 다시 열었어요.');
+      } catch {
+        setFeedback('공유를 열 수 없어요. 다시 시도해 주세요.');
+      }
       return;
     }
 
@@ -233,7 +251,7 @@ export default function CreateCardScreen() {
               icon={<Send size={18} color={palette.onLight} />}
               fullWidth
               onPress={() => {
-                void publishPreview('share');
+                void handleSharePreview();
               }}
             />
             <ActionButton
@@ -242,7 +260,7 @@ export default function CreateCardScreen() {
               icon={<Link2 size={18} color={palette.primaryDeep} />}
               fullWidth
               onPress={() => {
-                void publishPreview('copy');
+                void handleCopyPreviewLink();
               }}
             />
           </View>

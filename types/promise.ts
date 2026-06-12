@@ -1,4 +1,4 @@
-export type AppointmentMode = 'DIRECT' | 'POLL';
+﻿export type AppointmentMode = 'DIRECT' | 'POLL';
 
 export type AppointmentStatus = 'DRAFT' | 'PENDING' | 'VOTING' | 'CONFIRMED' | 'DECLINED';
 
@@ -69,4 +69,3 @@ export interface PromiseRepository {
   listRecentCards(): Promise<PromiseCard[]>;
   listScheduleItems(): Promise<ScheduleItem[]>;
 }
-

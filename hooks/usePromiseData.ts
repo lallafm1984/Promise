@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 
 import { mockPromiseRepository } from '@/data/mockPromiseRepository';
 import type { HostProfile, PromiseCard, ScheduleItem } from '@/types/promise';
@@ -66,4 +66,3 @@ export function usePromiseData() {
 
   return state;
 }
-

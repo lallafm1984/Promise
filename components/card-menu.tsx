@@ -115,6 +115,7 @@ export function DraftInput({ label, value, placeholder, icon, multiline, onChang
         <Text style={styles.inputLabel}>{label}</Text>
       </View>
       <TextInput
+        accessibilityLabel={label}
         value={value}
         multiline={multiline}
         onChangeText={onChangeText}
@@ -187,6 +188,8 @@ export function DraftPreviewCard({ card }: { card: PromiseCard }) {
 }
 
 export function ManagedCardsSection({ cards, onAction }: ManagedCardsSectionProps) {
+  const now = new Date();
+
   if (cards.length === 0) {
     return (
       <Card style={styles.emptyCard}>
@@ -201,7 +204,7 @@ export function ManagedCardsSection({ cards, onAction }: ManagedCardsSectionProp
   return (
     <View style={styles.managementStack}>
       {statusGroups.map((group) => {
-        const groupCards = cards.filter((card) => getManagedStatusGroup(card) === group.key);
+        const groupCards = cards.filter((card) => getManagedStatusGroup(card, now) === group.key);
 
         if (groupCards.length === 0) {
           return null;
@@ -211,7 +214,7 @@ export function ManagedCardsSection({ cards, onAction }: ManagedCardsSectionProp
           <View key={group.key} style={styles.statusGroup}>
             <Text style={styles.statusGroupTitle}>{group.title}</Text>
             {groupCards.map((card) => (
-              <ManagedCardRow key={card.id} card={card} groupTitle={group.title} onAction={onAction} />
+              <ManagedCardRow key={card.id} card={card} now={now} onAction={onAction} />
             ))}
           </View>
         );
@@ -222,22 +225,24 @@ export function ManagedCardsSection({ cards, onAction }: ManagedCardsSectionProp
 
 function ManagedCardRow({
   card,
-  groupTitle,
+  now,
   onAction,
 }: {
   card: PromiseCard;
-  groupTitle: string;
+  now: Date;
   onAction: ManagedCardsSectionProps['onAction'];
 }) {
-  const action = getManagedCardAction(card);
+  const statusGroup = getManagedStatusGroup(card, now);
+  const action = getManagedCardAction(card, now);
   const primarySlot = getPrimarySlot(card);
+  const statusTitle = statusGroups.find((group) => group.key === statusGroup)?.title;
 
   return (
     <Card style={styles.managedCard}>
       <View style={styles.managedTop}>
         <Chip label={getModeLabel(card.mode)} tone={card.mode === 'DIRECT' ? 'amber' : 'aqua'} />
         <Text style={styles.managedStatus} numberOfLines={1}>
-          {groupTitle}
+          {statusTitle}
         </Text>
       </View>
       <Text style={styles.managedTitle} numberOfLines={2}>

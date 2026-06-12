@@ -1,17 +1,17 @@
 import { StatusBar } from 'expo-status-bar';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
-import EditScreenInfo from '@/components/EditScreenInfo';
-import { Text, View } from '@/components/Themed';
+import { palette, radius, spacing } from '@/constants/theme';
 
 export default function ModalScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Modal</Text>
-      <View style={styles.separator} lightColor="#eee" darkColor="rgba(255,255,255,0.1)" />
-      <EditScreenInfo path="app/modal.tsx" />
+      <View style={styles.modalMark}>
+        <Text style={styles.modalMarkText}>언제?</Text>
+      </View>
+      <Text style={styles.title}>언제볼래 MVP 골격</Text>
+      <Text style={styles.body}>스프라이트 시트 기준의 약속 카드 앱 디자인 프로토타입입니다.</Text>
 
-      {/* Use a light status bar on iOS to account for the black space above the modal */}
       <StatusBar style={Platform.OS === 'ios' ? 'light' : 'auto'} />
     </View>
   );
@@ -19,17 +19,42 @@ export default function ModalScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
     alignItems: 'center',
+    backgroundColor: palette.background,
+    flex: 1,
+    gap: spacing.md,
     justifyContent: 'center',
+    padding: spacing.xl,
   },
   title: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    color: palette.ink,
+    fontSize: 24,
+    fontWeight: '900',
   },
-  separator: {
-    marginVertical: 30,
-    height: 1,
-    width: '80%',
+  modalMark: {
+    alignItems: 'center',
+    backgroundColor: palette.amberSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.xl,
+    borderWidth: 2,
+    height: 118,
+    justifyContent: 'center',
+    transform: [{ rotate: '-5deg' }],
+    width: 148,
+  },
+  modalMarkText: {
+    color: palette.primaryDeep,
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  body: {
+    backgroundColor: palette.surfaceSoft,
+    borderRadius: radius.lg,
+    color: palette.inkMuted,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 21,
+    padding: spacing.lg,
+    textAlign: 'center',
   },
 });

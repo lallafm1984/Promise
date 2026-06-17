@@ -12,6 +12,9 @@
     },
     "android": {
       "package": "com.lim.whenbollae",
+      "permissions": [
+        "SCHEDULE_EXACT_ALARM"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#F9E5CC",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -27,6 +30,15 @@
     },
     "plugins": [
       "expo-router",
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#F97940",
+          "defaultChannel": "whenbollae-default"
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -34,10 +46,30 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
+      ],
+      [
+        "expo-navigation-bar",
+        {
+          "hidden": true,
+          "style": "dark",
+          "enforceContrast": false
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "expo-navigation-bar": {
+        "enforceContrast": false,
+        "style": "dark",
+        "hidden": true
+      },
+      "eas": {
+        "projectId": "6b8693bf-7ade-440c-a56f-293f4a1dc069"
+      }
+    },
+    "owner": "lallafm"
   }
 }

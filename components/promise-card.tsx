@@ -10,56 +10,6 @@ function getResponseTotal(slot: CandidateSlot) {
   return slot.summary.yes + slot.summary.maybe + slot.summary.no + slot.summary.unanswered;
 }
 
-export function InboxPromiseCard({ card }: { card: PromiseCard }) {
-  const primarySlot = card.candidates[0];
-
-  return (
-    <Card style={styles.requestCard}>
-      <View style={styles.cardRibbon}>
-        <MessageCircle size={14} color={palette.ink} />
-        <Text style={styles.cardRibbonText}>카톡 링크로 방금 도착</Text>
-      </View>
-      <View style={styles.cardTopRow}>
-        <View style={styles.senderRow}>
-          <View style={styles.senderBadge}>
-            <Text style={styles.senderBadgeText}>{card.requesterName?.slice(0, 1) ?? '볼'}</Text>
-          </View>
-          <View>
-            <Text style={styles.senderText}>
-              {card.requesterName ? `${card.requesterName}가 보낸 요청` : '약속 카드 투표'}
-            </Text>
-            <Text style={styles.subtleText}>카톡 링크에서 1분 전</Text>
-          </View>
-        </View>
-        <StatusBadge status={card.status} />
-      </View>
-
-      <Text style={styles.cardTitle}>{card.title}</Text>
-
-      <View style={styles.infoList}>
-        <InfoRow icon={<Clock3 size={16} color={palette.primaryDeep} />} text={primarySlot.label} />
-        <InfoRow icon={<MapPin size={16} color={palette.primaryDeep} />} text={card.location} />
-      </View>
-
-      <View style={styles.messageBox}>
-        <Text style={styles.messageText}>"{card.message}"</Text>
-      </View>
-
-      <View style={styles.cardBottomRow}>
-        <AvatarStack participants={card.participants} />
-        <Text style={styles.subtleText}>
-          {card.participants.length}명 참여 · {getResponseTotal(primarySlot)}응답
-        </Text>
-      </View>
-
-      <View style={styles.actionRow}>
-        <ActionButton label="가능해" variant="primary" fullWidth />
-        <ActionButton label="다른 날" variant="secondary" fullWidth />
-      </View>
-    </Card>
-  );
-}
-
 export function VoteSummaryCard({ card }: { card: PromiseCard }) {
   const topSlot = card.candidates[0];
   const total = Math.max(getResponseTotal(topSlot), 1);
@@ -171,75 +121,16 @@ export function PeopleHint({ count }: { count: number }) {
 }
 
 const styles = StyleSheet.create({
-  requestCard: {
-    backgroundColor: palette.paper,
-    gap: spacing.md,
-    overflow: 'hidden',
-  },
-  cardRibbon: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: palette.lime,
-    borderColor: palette.lineStrong,
-    borderRadius: radius.pill,
-    borderWidth: 1.5,
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: -2,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 7,
-    transform: [{ rotate: '-1.5deg' }],
-  },
-  cardRibbonText: {
-    color: palette.onLight,
-    fontSize: 12,
-    fontWeight: '900',
-  },
   cardTopRow: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  senderRow: {
-    alignItems: 'center',
-    flex: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  senderBadge: {
-    alignItems: 'center',
-    backgroundColor: palette.amber,
-    borderColor: palette.ink,
-    borderRadius: radius.pill,
-    borderWidth: 2,
-    height: 42,
-    justifyContent: 'center',
-    width: 42,
-  },
-  senderBadgeText: {
-    color: palette.onLight,
-    fontSize: 16,
-    fontWeight: '900',
-  },
-  senderText: {
-    color: palette.ink,
-    fontSize: 15,
-    fontWeight: '900',
-  },
   subtleText: {
     color: palette.inkMuted,
     fontSize: 12,
     fontWeight: '700',
-  },
-  cardTitle: {
-    color: palette.ink,
-    fontSize: 25,
-    fontWeight: '900',
-    lineHeight: 31,
-  },
-  infoList: {
-    gap: spacing.xs,
   },
   infoRow: {
     alignItems: 'center',
@@ -258,29 +149,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
-  messageBox: {
-    backgroundColor: '#FFF0A6',
-    borderColor: palette.lineStrong,
-    borderLeftColor: palette.coral,
-    borderLeftWidth: 4,
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    padding: spacing.sm,
-  },
-  messageText: {
-    color: palette.onLight,
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 20,
-  },
   cardBottomRow: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  actionRow: {
-    flexDirection: 'row',
     gap: spacing.sm,
   },
   summaryCard: {

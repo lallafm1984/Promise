@@ -1,4 +1,13 @@
-import type { HostProfile, PromiseCard, PromiseRepository, ScheduleItem } from '@/types/promise';
+import { applyReceivedCardResponse, buildConfirmedCard, buildScheduleItemFromConfirmedCard } from '@/lib/cardMenu';
+import type {
+  ConfirmCardInput,
+  HostProfile,
+  PromiseCard,
+  PromiseRepository,
+  ReceivedCardAlert,
+  RespondToReceivedCardInput,
+  ScheduleItem,
+} from '@/types/promise';
 
 const profile: HostProfile = {
   id: 'host-minseo',
@@ -10,7 +19,7 @@ const profile: HostProfile = {
   reminderLead: '30_MIN',
 };
 
-const cards: PromiseCard[] = [
+let cards: PromiseCard[] = [
   {
     id: 'card-seongsu-cafe',
     mode: 'DIRECT',
@@ -130,11 +139,13 @@ const cards: PromiseCard[] = [
   },
 ];
 
-const schedule: ScheduleItem[] = [
+let schedule: ScheduleItem[] = [
   {
     id: 'schedule-seongsu-cafe',
     cardId: 'card-seongsu-cafe',
     title: '하린 · 성수 카페',
+    startsAt: '2026-06-14T19:30:00+09:00',
+    endsAt: '2026-06-14T20:30:00+09:00',
     dateLabel: '6월 14일',
     timeLabel: '19:30 - 20:30',
     location: '성수 카페',
@@ -144,6 +155,8 @@ const schedule: ScheduleItem[] = [
     id: 'schedule-gangnam-movie',
     cardId: 'card-gangnam-movie',
     title: '지우 · 강남 CGV',
+    startsAt: '2026-06-20T17:00:00+09:00',
+    endsAt: '2026-06-20T19:20:00+09:00',
     dateLabel: '6월 20일',
     timeLabel: '17:00 - 19:20',
     location: '강남 CGV',
@@ -151,17 +164,81 @@ const schedule: ScheduleItem[] = [
   },
 ];
 
+function applyConfirmation(card: PromiseCard, input: ConfirmCardInput): PromiseCard {
+  if (card.id !== input.cardId) {
+    return card;
+  }
+
+  return buildConfirmedCard(card, input.candidateId);
+}
+
+function applyReceivedResponse(card: PromiseCard, input: RespondToReceivedCardInput): PromiseCard {
+  if (card.id !== input.cardId || !card.requesterName) {
+    return card;
+  }
+
+  return applyReceivedCardResponse(card, {
+    respondentId: profile.id,
+    respondentName: profile.displayName,
+    responses: input.responses,
+  });
+}
+
 export const mockPromiseRepository: PromiseRepository = {
   async getHostProfile() {
     return profile;
-  },
-  async listInboxCards() {
-    return cards.filter((card) => card.status === 'PENDING' || card.status === 'VOTING');
   },
   async listRecentCards() {
     return cards;
   },
   async listScheduleItems() {
     return schedule;
+  },
+  async listReceivedCardAlerts() {
+    return cards
+      .filter((card) => Boolean(card.requesterName))
+      .map<ReceivedCardAlert>((card) => ({
+        id: card.id,
+        title: card.title,
+        location: card.location,
+        requesterName: card.requesterName ?? card.hostName,
+        createdAt: card.createdAt,
+      }));
+  },
+  async createManagedCard(card) {
+    cards = [card, ...cards.filter((currentCard) => currentCard.id !== card.id)];
+    return card;
+  },
+  async deleteManagedCard(cardId) {
+    cards = cards.filter((card) => card.id !== cardId);
+  },
+  async confirmManagedCard(input) {
+    const currentCard = cards.find((card) => card.id === input.cardId);
+    const confirmedCard = currentCard ? applyConfirmation(currentCard, input) : undefined;
+
+    if (!confirmedCard || confirmedCard.status !== 'CONFIRMED') {
+      throw new Error('확정할 후보 시간을 찾지 못했어요.');
+    }
+
+    cards = cards.map((card) => (card.id === input.cardId ? confirmedCard : card));
+    const scheduleItem = buildScheduleItemFromConfirmedCard(confirmedCard);
+
+    if (scheduleItem) {
+      schedule = [scheduleItem, ...schedule.filter((item) => item.cardId !== confirmedCard.id)];
+    }
+
+    return confirmedCard;
+  },
+  async respondToReceivedCard(input) {
+    const currentCard = cards.find((card) => card.id === input.cardId);
+    const respondedCard = currentCard ? applyReceivedResponse(currentCard, input) : undefined;
+
+    if (!respondedCard || respondedCard === currentCard) {
+      throw new Error('응답할 카드를 찾지 못했어요.');
+    }
+
+    cards = cards.map((card) => (card.id === input.cardId ? respondedCard : card));
+
+    return respondedCard;
   },
 };

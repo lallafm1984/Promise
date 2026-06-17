@@ -1,8 +1,12 @@
-import { CalendarDays, Home, PlusCircle, UserRound, type LucideIcon } from 'lucide-react-native';
+import { Archive, CalendarDays, PlusCircle, UserRound, UsersRound, type LucideIcon } from 'lucide-react-native';
 import { Tabs } from 'expo-router';
 import { Platform, type ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { palette } from '@/constants/theme';
+
+const TAB_BAR_BASE_HEIGHT = 72;
+const MIN_NATIVE_BOTTOM_INSET = 16;
 
 function tabIcon(Icon: LucideIcon) {
   return function TabIcon({ color, size }: { color: ColorValue; size: number }) {
@@ -11,8 +15,12 @@ function tabIcon(Icon: LucideIcon) {
 }
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Platform.OS === 'web' ? 0 : Math.max(insets.bottom, MIN_NATIVE_BOTTOM_INSET);
+
   return (
     <Tabs
+      initialRouteName="create"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: palette.primary,
@@ -25,9 +33,9 @@ export default function TabLayout() {
           alignSelf: Platform.OS === 'web' ? 'flex-start' : 'center',
           backgroundColor: palette.surface,
           borderTopColor: palette.line,
-          height: 72,
-          maxWidth: 350,
-          paddingBottom: 10,
+          height: TAB_BAR_BASE_HEIGHT + bottomInset,
+          maxWidth: 430,
+          paddingBottom: 10 + bottomInset,
           paddingTop: 8,
           width: '100%',
         },
@@ -35,8 +43,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: '인박스',
-          tabBarIcon: tabIcon(Home),
+          href: null,
         }}
       />
       <Tabs.Screen
@@ -49,8 +56,22 @@ export default function TabLayout() {
       <Tabs.Screen
         name="schedule"
         options={{
-          title: '주간',
+          title: '일정',
           tabBarIcon: tabIcon(CalendarDays),
+        }}
+      />
+      <Tabs.Screen
+        name="manage"
+        options={{
+          title: '관리함',
+          tabBarIcon: tabIcon(Archive),
+        }}
+      />
+      <Tabs.Screen
+        name="friends"
+        options={{
+          title: '친구',
+          tabBarIcon: tabIcon(UsersRound),
         }}
       />
       <Tabs.Screen

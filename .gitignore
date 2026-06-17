@@ -26,13 +26,16 @@ expo-web*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+whenbollae-*.png
 
 # macOS
 .DS_Store
 *.pem
 
 # local env files
+.env
 .env*.local
+supabase/.temp/
 
 # typescript
 *.tsbuildinfo

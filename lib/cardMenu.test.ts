@@ -3,12 +3,33 @@ import { describe, expect, it } from 'vitest';
 import type { PromiseCard } from '@/types/promise';
 import {
   buildShareMessage,
+  buildConfirmedCard,
+  buildScheduleItemFromConfirmedCard,
+  applyReceivedCardResponse,
+  canDeleteManagedCard,
+  compactDraftTimes,
+  ensureDraftTimeCount,
+  formatDraftDateTimeLabel,
+  formatDraftDateTimeShortLabel,
+  getCandidateEndsAt,
   getGeneratedCardTitle,
   getManagedCardAction,
   getManagedStatusGroup,
   getModeLabel,
+  getRecipientProfileIds,
+  mergeManagedCards,
+  mergeDraftDatePart,
+  mergeDraftTimePart,
+  removeDraftTimeAtIndex,
   validateCardDraft,
 } from './cardMenu';
+
+function localIso(month: number, day: number, hours: number, minutes: number): string {
+  return new Date(2026, month - 1, day, hours, minutes, 0, 0).toISOString();
+}
+
+const june14At1930 = localIso(6, 14, 19, 30);
+const june15At2000 = localIso(6, 15, 20, 0);
 
 const baseCard: PromiseCard = {
   id: 'card-test',
@@ -22,13 +43,13 @@ const baseCard: PromiseCard = {
   createdAt: '2026-06-12T09:00:00+09:00',
   selectedSlotId: 'slot-1',
   candidates: [
-    {
-      id: 'slot-1',
-      startsAt: '2026-06-14T19:30:00+09:00',
-      endsAt: '2026-06-14T20:30:00+09:00',
-      label: '6월 14일 19:30',
-      shortLabel: '6.14 19:30',
-      summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+      {
+        id: 'slot-1',
+        startsAt: june14At1930,
+        endsAt: getCandidateEndsAt(june14At1930),
+        label: '6월 14일 19:30',
+        shortLabel: '6.14 19:30',
+        summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
     },
   ],
   participants: [],
@@ -41,7 +62,7 @@ describe('card menu helpers', () => {
   });
 
   it('validates direct cards with one time and one place', () => {
-    expect(validateCardDraft({ mode: 'DIRECT', times: ['6월 14일 19:30'], location: '성수 카페', message: '' })).toEqual({
+    expect(validateCardDraft({ mode: 'DIRECT', times: [june14At1930], location: '성수 카페', message: '' })).toEqual({
       valid: true,
     });
 
@@ -50,14 +71,14 @@ describe('card menu helpers', () => {
       error: '만날 시간을 골라주세요.',
     });
 
-    expect(validateCardDraft({ mode: 'DIRECT', times: ['6월 14일 19:30'], location: '', message: '' })).toEqual({
+    expect(validateCardDraft({ mode: 'DIRECT', times: [june14At1930], location: '', message: '' })).toEqual({
       valid: false,
       error: '만날 장소를 적어주세요.',
     });
   });
 
   it('requires two candidate times for poll cards', () => {
-    expect(validateCardDraft({ mode: 'POLL', times: ['6월 14일 19:30'], location: '성수 카페', message: '' })).toEqual({
+    expect(validateCardDraft({ mode: 'POLL', times: [june14At1930], location: '성수 카페', message: '' })).toEqual({
       valid: false,
       error: '언제볼래?는 후보 시간이 2개 이상 필요해요.',
     });
@@ -65,26 +86,48 @@ describe('card menu helpers', () => {
     expect(
       validateCardDraft({
         mode: 'POLL',
-        times: ['6월 14일 19:30', '6월 15일 20:00'],
+        times: [june14At1930, june15At2000],
         location: '성수 카페',
         message: '',
       }),
     ).toEqual({ valid: true });
   });
 
+  it('keeps poll deletion on candidate 2+ and switches to direct when one time remains', () => {
+    expect(removeDraftTimeAtIndex('POLL', [june14At1930, june15At2000, localIso(6, 16, 19, 0)], 1)).toEqual({
+      mode: 'POLL',
+      times: [june14At1930, localIso(6, 16, 19, 0)],
+    });
+
+    expect(removeDraftTimeAtIndex('POLL', [june14At1930, june15At2000], 1)).toEqual({
+      mode: 'DIRECT',
+      times: [june14At1930],
+    });
+  });
+
   it('generates direct and poll titles from time and place only', () => {
-    expect(getGeneratedCardTitle({ mode: 'DIRECT', times: ['6월 14일 19:30'], location: '성수 카페', message: '' })).toBe(
+    expect(getGeneratedCardTitle({ mode: 'DIRECT', times: [june14At1930], location: '성수 카페', message: '' })).toBe(
       '6월 14일 19:30에 성수 카페에서 볼래?',
     );
 
     expect(
       getGeneratedCardTitle({
         mode: 'POLL',
-        times: ['6월 14일 19:30', '6월 15일 20:00'],
+        times: [june14At1930, june15At2000],
         location: '성수 카페',
         message: '',
       }),
     ).toBe('성수 카페에서 언제볼래?');
+  });
+
+  it('keeps draft times as valid timestamps while formatting labels for cards', () => {
+    expect(compactDraftTimes([june14At1930, '', 'not-a-date'])).toEqual([june14At1930]);
+    expect(ensureDraftTimeCount([june14At1930], 2)).toHaveLength(2);
+    expect(formatDraftDateTimeLabel(june14At1930)).toBe('6월 14일 19:30');
+    expect(formatDraftDateTimeShortLabel(june14At1930)).toBe('6/14 19:30');
+    expect(mergeDraftDatePart(june14At1930, '2026-06-20')).toBe(localIso(6, 20, 19, 30));
+    expect(mergeDraftTimePart(june14At1930, '20:15')).toBe(localIso(6, 14, 20, 15));
+    expect(getCandidateEndsAt(june14At1930)).toBe(localIso(6, 14, 20, 30));
   });
 
   it('groups managed cards by status and moves old confirmed cards to past appointments', () => {
@@ -102,7 +145,7 @@ describe('card menu helpers', () => {
         {
           ...baseCard,
           status: 'CONFIRMED',
-          candidates: [{ ...baseCard.candidates[0], startsAt: '2026-06-01T19:30:00+09:00' }],
+          candidates: [{ ...baseCard.candidates[0], startsAt: localIso(6, 1, 19, 30) }],
         },
         new Date('2026-06-12T12:00:00+09:00'),
       ),
@@ -112,7 +155,7 @@ describe('card menu helpers', () => {
         {
           ...baseCard,
           status: 'DECLINED',
-          candidates: [{ ...baseCard.candidates[0], startsAt: '2026-06-01T19:30:00+09:00' }],
+          candidates: [{ ...baseCard.candidates[0], startsAt: localIso(6, 1, 19, 30) }],
         },
         new Date('2026-06-12T12:00:00+09:00'),
       ),
@@ -137,13 +180,128 @@ describe('card menu helpers', () => {
         {
           ...baseCard,
           status: 'CONFIRMED',
-          candidates: [{ ...baseCard.candidates[0], startsAt: '2026-06-01T19:30:00+09:00' }],
+          candidates: [{ ...baseCard.candidates[0], startsAt: localIso(6, 1, 19, 30) }],
         },
         new Date('2026-06-12T12:00:00+09:00'),
       ),
     ).toEqual({
       kind: 'RECREATE',
       label: '다시 만들기',
+    });
+  });
+
+  it('opens received cards instead of owner-only management actions', () => {
+    const receivedCard: PromiseCard = {
+      ...baseCard,
+      requesterName: '하린',
+    };
+
+    expect(getManagedCardAction({ ...receivedCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
+      kind: 'OPEN_RECEIVED',
+      label: '카드 열기',
+    });
+    expect(getManagedCardAction({ ...receivedCard, status: 'VOTING' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
+      kind: 'OPEN_RECEIVED',
+      label: '카드 열기',
+    });
+    expect(getManagedCardAction({ ...receivedCard, status: 'CONFIRMED' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
+      kind: 'SCHEDULE',
+      label: '일정 보기',
+    });
+    expect(
+      getManagedCardAction(
+        {
+          ...receivedCard,
+          status: 'CONFIRMED',
+          candidates: [{ ...receivedCard.candidates[0], startsAt: localIso(6, 1, 19, 30) }],
+        },
+        new Date('2026-06-12T12:00:00+09:00'),
+      ),
+    ).toEqual({
+      kind: 'OPEN_RECEIVED',
+      label: '카드 열기',
+    });
+  });
+
+  it('allows deleting only owner past cards', () => {
+    const pastOwnerCard: PromiseCard = {
+      ...baseCard,
+      status: 'CONFIRMED',
+      candidates: [{ ...baseCard.candidates[0], startsAt: localIso(6, 1, 19, 30) }],
+    };
+    const pastReceivedCard: PromiseCard = {
+      ...pastOwnerCard,
+      requesterName: '하린',
+    };
+
+    expect(canDeleteManagedCard(pastOwnerCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
+    expect(canDeleteManagedCard(pastReceivedCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
+    expect(canDeleteManagedCard({ ...baseCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
+  });
+
+  it('merges owned and received managed cards without duplicating owned cards', () => {
+    const receivedCard: PromiseCard = {
+      ...baseCard,
+      id: 'received-card',
+      requesterName: '하린',
+    };
+    const duplicatedOwnerCard: PromiseCard = {
+      ...baseCard,
+      id: 'card-test',
+      requesterName: '하린',
+    };
+
+    expect(mergeManagedCards([baseCard], [receivedCard, duplicatedOwnerCard]).map((card) => card.id)).toEqual([
+      'card-test',
+      'received-card',
+    ]);
+  });
+
+  it('builds a reminder-ready schedule item from a confirmed received card', () => {
+    const receivedConfirmedCard: PromiseCard = {
+      ...baseCard,
+      status: 'CONFIRMED',
+      requesterName: '하린',
+    };
+
+    expect(buildScheduleItemFromConfirmedCard(receivedConfirmedCard)).toEqual({
+      id: 'schedule-card-test',
+      cardId: 'card-test',
+      title: '하린 · 성수 카페',
+      startsAt: june14At1930,
+      endsAt: getCandidateEndsAt(june14At1930),
+      dateLabel: '6월 14일',
+      timeLabel: '19:30 - 20:30',
+      location: '성수 카페',
+      status: 'REMINDER_ON',
+    });
+
+    expect(buildScheduleItemFromConfirmedCard({ ...receivedConfirmedCard, selectedSlotId: 'missing' })).toBeNull();
+    expect(buildScheduleItemFromConfirmedCard({ ...receivedConfirmedCard, status: 'VOTING' })).toBeNull();
+  });
+
+  it('applies a received card response to summaries and participant state', () => {
+    const responseCard: PromiseCard = {
+      ...baseCard,
+      requesterName: '하린',
+      participants: [{ id: 'profile-minseo', name: '민', color: '#FFD6E7', choice: 'UNANSWERED' }],
+    };
+
+    expect(
+      applyReceivedCardResponse(responseCard, {
+        respondentId: 'profile-minseo',
+        respondentName: '민서',
+        responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+      }),
+    ).toEqual({
+      ...responseCard,
+      participants: [{ id: 'profile-minseo', name: '민', color: '#FFD6E7', choice: 'YES' }],
+      candidates: [
+        {
+          ...responseCard.candidates[0],
+          summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 },
+        },
+      ],
     });
   });
 
@@ -168,8 +326,8 @@ describe('card menu helpers', () => {
           {
             ...baseCard.candidates[0],
             id: 'slot-2',
-            startsAt: '2026-06-15T20:00:00+09:00',
-            endsAt: '2026-06-15T21:00:00+09:00',
+            startsAt: june15At2000,
+            endsAt: getCandidateEndsAt(june15At2000),
             label: '6월 15일 20:00',
             shortLabel: '6.15 20:00',
           },
@@ -193,5 +351,45 @@ describe('card menu helpers', () => {
         'https://whenbollae.app/c/card-test',
       ].join('\n'),
     );
+  });
+
+  it('maps selected app friends to unique recipient profile ids', () => {
+    const friends = [
+      { id: 'friend-jiu', profileId: 'profile-jiu' },
+      { id: 'friend-harin', profileId: 'profile-harin' },
+      { id: 'friend-seoa', profileId: 'profile-seoa' },
+    ];
+
+    expect(getRecipientProfileIds(friends, ['friend-harin', 'friend-harin', 'missing', 'friend-jiu'])).toEqual([
+      'profile-harin',
+      'profile-jiu',
+    ]);
+  });
+
+  it('builds a confirmed card from the selected candidate', () => {
+    const pollCard: PromiseCard = {
+      ...baseCard,
+      mode: 'POLL',
+      status: 'VOTING',
+      selectedSlotId: undefined,
+      candidates: [
+        baseCard.candidates[0],
+        {
+          ...baseCard.candidates[0],
+          id: 'slot-2',
+          startsAt: june15At2000,
+          endsAt: getCandidateEndsAt(june15At2000),
+          label: '6월 15일 20:00',
+          shortLabel: '6/15 20:00',
+        },
+      ],
+    };
+
+    expect(buildConfirmedCard(pollCard, 'slot-2')).toEqual({
+      ...pollCard,
+      status: 'CONFIRMED',
+      selectedSlotId: 'slot-2',
+    });
+    expect(buildConfirmedCard(pollCard, 'missing-slot')).toEqual(pollCard);
   });
 });

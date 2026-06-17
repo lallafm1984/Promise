@@ -1,4 +1,12 @@
-import type { AppointmentMode, CandidateSlot, PromiseCard } from '@/types/promise';
+import type {
+  AppointmentMode,
+  CandidateSlot,
+  Participant,
+  PromiseCard,
+  ReceivedCardResponseChoice,
+  ResponseChoice,
+  ScheduleItem,
+} from '@/types/promise';
 
 export interface CardDraft {
   mode: AppointmentMode;
@@ -11,19 +19,187 @@ export type DraftValidationResult = { valid: true } | { valid: false; error: str
 
 export type ManagedStatusGroup = 'PENDING' | 'VOTING' | 'CONFIRMED' | 'PAST';
 
-export type ManagedCardActionKind = 'RESHARE' | 'RESULTS' | 'SCHEDULE' | 'RECREATE';
+export type ManagedCardActionKind = 'RESHARE' | 'RESULTS' | 'SCHEDULE' | 'RECREATE' | 'OPEN_RECEIVED';
 
 export interface ManagedCardAction {
   kind: ManagedCardActionKind;
   label: string;
 }
 
+export interface ApplyReceivedCardResponseInput {
+  respondentId: string;
+  respondentName: string;
+  responses: Array<{
+    candidateId: string;
+    choice: ReceivedCardResponseChoice;
+  }>;
+}
+
 export function getModeLabel(mode: AppointmentMode): string {
   return mode === 'DIRECT' ? '이때볼래?' : '언제볼래?';
 }
 
+const DEFAULT_MEETING_HOUR = 19;
+const DEFAULT_MEETING_MINUTE = 0;
+const MEETING_DURATION_MINUTES = 60;
+
+function padTwo(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function parseDraftDateTime(value: string): Date | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function createDefaultDraftTime(slotIndex = 0, baseDate = new Date()): string {
+  const date = new Date(baseDate);
+  date.setDate(date.getDate() + slotIndex + 1);
+  date.setHours(DEFAULT_MEETING_HOUR, DEFAULT_MEETING_MINUTE, 0, 0);
+  return date.toISOString();
+}
+
+export function createDefaultDraftTimes(count = 2, baseDate = new Date()): string[] {
+  return Array.from({ length: count }, (_, index) => createDefaultDraftTime(index, baseDate));
+}
+
+export function isDraftTimeValid(value: string): boolean {
+  return value.trim().length > 0 && parseDraftDateTime(value) !== null;
+}
+
+export function ensureDraftTimeCount(times: string[], count: number, baseDate = new Date()): string[] {
+  const nextTimes = times.filter(isDraftTimeValid);
+
+  while (nextTimes.length < count) {
+    nextTimes.push(createDefaultDraftTime(nextTimes.length, baseDate));
+  }
+
+  return nextTimes;
+}
+
+export function removeDraftTimeAtIndex(
+  mode: AppointmentMode,
+  times: string[],
+  indexToRemove: number,
+): { mode: AppointmentMode; times: string[] } {
+  const nextTimes = times.filter((_, index) => index !== indexToRemove);
+
+  if (mode === 'POLL' && nextTimes.length < 2) {
+    return {
+      mode: 'DIRECT',
+      times: nextTimes.length > 0 ? nextTimes : [createDefaultDraftTime(0)],
+    };
+  }
+
+  return {
+    mode,
+    times: mode === 'POLL' ? ensureDraftTimeCount(nextTimes, 2) : nextTimes,
+  };
+}
+
+export function formatDraftDateTimeLabel(value: string): string {
+  const date = parseDraftDateTime(value);
+
+  if (!date) {
+    return '';
+  }
+
+  return `${date.getMonth() + 1}월 ${date.getDate()}일 ${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+}
+
+export function formatDraftDateTimeShortLabel(value: string): string {
+  const date = parseDraftDateTime(value);
+
+  if (!date) {
+    return '';
+  }
+
+  return `${date.getMonth() + 1}/${date.getDate()} ${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+}
+
+export function formatDraftDateInputValue(value: string): string {
+  const date = parseDraftDateTime(value);
+
+  if (!date) {
+    return '';
+  }
+
+  return `${date.getFullYear()}-${padTwo(date.getMonth() + 1)}-${padTwo(date.getDate())}`;
+}
+
+export function formatDraftTimeInputValue(value: string): string {
+  const date = parseDraftDateTime(value);
+
+  if (!date) {
+    return '';
+  }
+
+  return `${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+}
+
+export function mergeDraftDatePart(currentValue: string, dateValue: string): string {
+  const currentDate = parseDraftDateTime(currentValue) ?? new Date(createDefaultDraftTime());
+  const [year, month, day] = dateValue.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return currentDate.toISOString();
+  }
+
+  return new Date(year, month - 1, day, currentDate.getHours(), currentDate.getMinutes(), 0, 0).toISOString();
+}
+
+export function mergeDraftTimePart(currentValue: string, timeValue: string): string {
+  const currentDate = parseDraftDateTime(currentValue) ?? new Date(createDefaultDraftTime());
+  const [hours, minutes] = timeValue.split(':').map(Number);
+
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || Number.isNaN(hours) || Number.isNaN(minutes)) {
+    return currentDate.toISOString();
+  }
+
+  return new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    currentDate.getDate(),
+    hours,
+    minutes,
+    0,
+    0,
+  ).toISOString();
+}
+
+export function mergeDraftDateTime(currentValue: string, selectedDate: Date, mode: 'date' | 'time'): string {
+  const currentDate = parseDraftDateTime(currentValue) ?? new Date(createDefaultDraftTime());
+
+  if (mode === 'date') {
+    return new Date(
+      selectedDate.getFullYear(),
+      selectedDate.getMonth(),
+      selectedDate.getDate(),
+      currentDate.getHours(),
+      currentDate.getMinutes(),
+      0,
+      0,
+    ).toISOString();
+  }
+
+  return new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    currentDate.getDate(),
+    selectedDate.getHours(),
+    selectedDate.getMinutes(),
+    0,
+    0,
+  ).toISOString();
+}
+
+export function getCandidateEndsAt(startsAt: string, durationMinutes = MEETING_DURATION_MINUTES): string {
+  const startDate = parseDraftDateTime(startsAt) ?? new Date(createDefaultDraftTime());
+  return new Date(startDate.getTime() + durationMinutes * 60 * 1000).toISOString();
+}
+
 export function compactDraftTimes(times: string[]): string[] {
-  return times.map((time) => time.trim()).filter(Boolean);
+  return times.map((time) => time.trim()).filter(isDraftTimeValid);
 }
 
 export function validateCardDraft(draft: CardDraft): DraftValidationResult {
@@ -48,7 +224,7 @@ export function getGeneratedCardTitle(draft: CardDraft): string {
   const location = draft.location.trim();
 
   if (draft.mode === 'DIRECT') {
-    return `${compactDraftTimes(draft.times)[0]}에 ${location}에서 볼래?`;
+    return `${formatDraftDateTimeLabel(compactDraftTimes(draft.times)[0] ?? '')}에 ${location}에서 볼래?`;
   }
 
   return `${location}에서 언제볼래?`;
@@ -81,6 +257,16 @@ export function getManagedStatusGroup(card: PromiseCard, now = new Date()): Mana
 }
 
 export function getManagedCardAction(card: PromiseCard, now = new Date()): ManagedCardAction {
+  if (card.requesterName) {
+    const group = getManagedStatusGroup(card, now);
+
+    if (group === 'CONFIRMED') {
+      return { kind: 'SCHEDULE', label: '일정 보기' };
+    }
+
+    return { kind: 'OPEN_RECEIVED', label: '카드 열기' };
+  }
+
   switch (getManagedStatusGroup(card, now)) {
     case 'PENDING':
       return { kind: 'RESHARE', label: '공유 다시하기' };
@@ -108,4 +294,155 @@ export function buildShareMessage(card: PromiseCard): string {
   lines.push(card.sharedUrl);
 
   return lines.join('\n');
+}
+
+export function getRecipientProfileIds(
+  friends: Array<{ id: string; profileId: string }>,
+  selectedFriendIds: string[],
+): string[] {
+  const recipientProfileIds: string[] = [];
+  const friendById = new Map(friends.map((friend) => [friend.id, friend]));
+
+  selectedFriendIds.forEach((friendId) => {
+    const friend = friendById.get(friendId);
+
+    if (!friend || recipientProfileIds.includes(friend.profileId)) {
+      return;
+    }
+
+    recipientProfileIds.push(friend.profileId);
+  });
+
+  return recipientProfileIds;
+}
+
+export function mergeManagedCards(ownedCards: PromiseCard[], receivedCards: PromiseCard[]): PromiseCard[] {
+  const ownedCardIds = new Set(ownedCards.map((card) => card.id));
+  return [...ownedCards, ...receivedCards.filter((card) => !ownedCardIds.has(card.id))];
+}
+
+export function canDeleteManagedCard(card: PromiseCard, now = new Date()): boolean {
+  return !card.requesterName && getManagedStatusGroup(card, now) === 'PAST';
+}
+
+export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleItem | null {
+  if (card.status !== 'CONFIRMED') {
+    return null;
+  }
+
+  const selectedSlot = card.selectedSlotId
+    ? card.candidates.find((candidate) => candidate.id === card.selectedSlotId)
+    : card.candidates[0];
+
+  if (!selectedSlot || !selectedSlot.startsAt || !selectedSlot.endsAt) {
+    return null;
+  }
+
+  const startDate = parseDraftDateTime(selectedSlot.startsAt);
+
+  if (!startDate) {
+    return null;
+  }
+
+  const endDate = parseDraftDateTime(selectedSlot.endsAt);
+  const titleName = card.requesterName ?? card.hostName;
+
+  return {
+    id: `schedule-${card.id}`,
+    cardId: card.id,
+    title: `${titleName} · ${card.location}`,
+    startsAt: selectedSlot.startsAt,
+    endsAt: selectedSlot.endsAt,
+    dateLabel: `${startDate.getMonth() + 1}월 ${startDate.getDate()}일`,
+    timeLabel: endDate
+      ? `${padTwo(startDate.getHours())}:${padTwo(startDate.getMinutes())} - ${padTwo(endDate.getHours())}:${padTwo(
+          endDate.getMinutes(),
+        )}`
+      : `${padTwo(startDate.getHours())}:${padTwo(startDate.getMinutes())}`,
+    location: card.location,
+    status: 'REMINDER_ON',
+  };
+}
+
+function getRepresentativeChoice(responses: ApplyReceivedCardResponseInput['responses']): ResponseChoice {
+  if (responses.some((response) => response.choice === 'YES')) {
+    return 'YES';
+  }
+
+  if (responses.some((response) => response.choice === 'MAYBE')) {
+    return 'MAYBE';
+  }
+
+  if (responses.some((response) => response.choice === 'NO')) {
+    return 'NO';
+  }
+
+  return 'UNANSWERED';
+}
+
+function shiftCandidateSummary(
+  summary: CandidateSlot['summary'],
+  previousChoice: ResponseChoice | undefined,
+  nextChoice: ReceivedCardResponseChoice,
+): CandidateSlot['summary'] {
+  const nextSummary = { ...summary };
+  const previousKey = previousChoice?.toLowerCase() as keyof CandidateSlot['summary'] | undefined;
+  const nextKey = nextChoice.toLowerCase() as keyof CandidateSlot['summary'];
+
+  if (previousKey && nextSummary[previousKey] > 0) {
+    nextSummary[previousKey] -= 1;
+  }
+
+  nextSummary[nextKey] += 1;
+
+  return nextSummary;
+}
+
+function getParticipantLabel(name: string) {
+  return name.trim().slice(0, 1) || '나';
+}
+
+export function applyReceivedCardResponse(card: PromiseCard, input: ApplyReceivedCardResponseInput): PromiseCard {
+  const previousParticipant = card.participants.find((participant) => participant.id === input.respondentId);
+  const responseByCandidateId = new Map(input.responses.map((response) => [response.candidateId, response]));
+  const representativeChoice = getRepresentativeChoice(input.responses);
+  const participant: Participant = {
+    id: input.respondentId,
+    name: previousParticipant?.name ?? getParticipantLabel(input.respondentName),
+    color: previousParticipant?.color ?? '#FFD6E7',
+    choice: representativeChoice,
+  };
+
+  return {
+    ...card,
+    participants: previousParticipant
+      ? card.participants.map((currentParticipant) =>
+          currentParticipant.id === input.respondentId ? participant : currentParticipant,
+        )
+      : [...card.participants, participant],
+    candidates: card.candidates.map((candidate) => {
+      const response = responseByCandidateId.get(candidate.id);
+
+      if (!response) {
+        return candidate;
+      }
+
+      return {
+        ...candidate,
+        summary: shiftCandidateSummary(candidate.summary, previousParticipant?.choice, response.choice),
+      };
+    }),
+  };
+}
+
+export function buildConfirmedCard(card: PromiseCard, candidateId: string): PromiseCard {
+  if (!card.candidates.some((candidate) => candidate.id === candidateId)) {
+    return card;
+  }
+
+  return {
+    ...card,
+    status: 'CONFIRMED',
+    selectedSlotId: candidateId,
+  };
 }

@@ -1,66 +1,60 @@
 ﻿import { useEffect, useState } from 'react';
 
-import { mockPromiseRepository } from '@/data/mockPromiseRepository';
-import type { HostProfile, PromiseCard, ScheduleItem } from '@/types/promise';
-
-interface PromiseData {
-  profile: HostProfile | null;
-  inboxCards: PromiseCard[];
-  recentCards: PromiseCard[];
-  scheduleItems: ScheduleItem[];
-  isLoading: boolean;
-  error: string | null;
-}
-
-const initialState: PromiseData = {
+import { getActivePromiseRepository } from '@/data/promiseRepository';
+import { getPromiseDataLoadErrorState, type PromiseDataState } from '@/lib/promiseDataState';
+import { supabase } from '@/lib/supabase';
+const initialState: PromiseDataState = {
   profile: null,
-  inboxCards: [],
   recentCards: [],
   scheduleItems: [],
   isLoading: true,
+  persisted: false,
   error: null,
 };
 
 export function usePromiseData() {
-  const [state, setState] = useState<PromiseData>(initialState);
+  const [state, setState] = useState<PromiseDataState>(initialState);
 
   useEffect(() => {
     let isMounted = true;
 
     async function load() {
       try {
-        const [profile, inboxCards, recentCards, scheduleItems] = await Promise.all([
-          mockPromiseRepository.getHostProfile(),
-          mockPromiseRepository.listInboxCards(),
-          mockPromiseRepository.listRecentCards(),
-          mockPromiseRepository.listScheduleItems(),
+        const { persisted, repository } = await getActivePromiseRepository();
+        const [profile, recentCards, scheduleItems] = await Promise.all([
+          repository.getHostProfile(),
+          repository.listRecentCards(),
+          repository.listScheduleItems(),
         ]);
 
         if (isMounted) {
           setState({
             profile,
-            inboxCards,
             recentCards,
             scheduleItems,
             isLoading: false,
+            persisted,
             error: null,
           });
         }
       } catch (error) {
         if (isMounted) {
-          setState((current) => ({
-            ...current,
-            isLoading: false,
-            error: error instanceof Error ? error.message : '데이터를 불러오지 못했어요.',
-          }));
+          setState((current) => getPromiseDataLoadErrorState(current, error));
         }
       }
     }
 
     load();
+    const {
+      data: { subscription },
+    } =
+      supabase?.auth.onAuthStateChange(() => {
+        void load();
+      }) ?? { data: { subscription: null } };
 
     return () => {
       isMounted = false;
+      subscription?.unsubscribe();
     };
   }, []);
 

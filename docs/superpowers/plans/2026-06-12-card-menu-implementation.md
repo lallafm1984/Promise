@@ -1492,7 +1492,7 @@ export const mockPromiseRepository: PromiseRepository = {
   async getHostProfile() {
     return profile;
   },
-  async listInboxCards() {
+  async listReceivedCardAlerts() {
     return cards.filter((card) => card.status === 'PENDING' || card.status === 'VOTING');
   },
   async listRecentCards() {

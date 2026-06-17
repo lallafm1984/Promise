@@ -10,8 +10,8 @@ export default function NotFoundScreen() {
       <View style={styles.container}>
         <Text style={styles.title}>카드를 찾지 못했어요</Text>
 
-        <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>인박스로 돌아가기</Text>
+        <Link href="/create" style={styles.link}>
+          <Text style={styles.linkText}>카드로 돌아가기</Text>
         </Link>
       </View>
     </>

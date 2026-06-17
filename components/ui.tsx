@@ -10,10 +10,13 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { palette, radius, shadow, spacing } from '@/constants/theme';
+import { getStorageModeCopy, type StorageModeSurface } from '@/lib/storageMode';
 import type { AppointmentStatus, Participant, ResponseChoice } from '@/types/promise';
+
+const MIN_NATIVE_BOTTOM_INSET = 16;
 
 type ButtonVariant = 'primary' | 'secondary' | 'kakao' | 'danger' | 'ghost';
 
@@ -37,18 +40,31 @@ interface ChipProps {
   selected?: boolean;
 }
 
+interface StorageModeNoticeProps {
+  persisted: boolean;
+  surface: StorageModeSurface;
+}
+
 export function AppScreen({ children, contentStyle }: AppScreenProps) {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const contentWidth = Platform.OS === 'web' ? Math.min(width, 350) : Math.min(width, 430);
+  const bottomInset = Platform.OS === 'web' ? 0 : Math.max(insets.bottom, MIN_NATIVE_BOTTOM_INSET);
+  const bottomPadding = bottomInset + spacing.xl;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        scrollIndicatorInsets={{ bottom: bottomPadding }}
         contentContainerStyle={[
           styles.screenContent,
-          { alignSelf: Platform.OS === 'web' ? 'flex-start' : 'center', width: contentWidth },
+          {
+            alignSelf: Platform.OS === 'web' ? 'flex-start' : 'center',
+            paddingBottom: bottomPadding,
+            width: contentWidth,
+          },
           contentStyle,
         ]}>
         {children}
@@ -113,6 +129,17 @@ export function Chip({ label, tone = 'neutral', selected }: ChipProps) {
   return (
     <View style={[styles.chip, styles[`${tone}Chip`], selected && styles.selectedChip]}>
       <Text style={[styles.chipLabel, styles[`${tone}ChipLabel`], selected && styles.selectedChipLabel]}>{label}</Text>
+    </View>
+  );
+}
+
+export function StorageModeNotice({ persisted, surface }: StorageModeNoticeProps) {
+  const copy = getStorageModeCopy(persisted, surface);
+
+  return (
+    <View style={[styles.storageModeNotice, copy.tone === 'persisted' ? styles.persistedStorageModeNotice : styles.localStorageModeNotice]}>
+      <Text style={styles.storageModeTitle}>{copy.title}</Text>
+      <Text style={styles.storageModeBody}>{copy.body}</Text>
     </View>
   );
 }
@@ -187,7 +214,6 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     padding: spacing.md,
-    paddingBottom: 112,
     gap: spacing.lg,
     width: '100%',
   },
@@ -352,6 +378,31 @@ const styles = StyleSheet.create({
   },
   neutralChipLabel: {
     color: palette.ink,
+  },
+  storageModeNotice: {
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    gap: 4,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  persistedStorageModeNotice: {
+    backgroundColor: palette.mintSoft,
+  },
+  localStorageModeNotice: {
+    backgroundColor: palette.amberSoft,
+  },
+  storageModeTitle: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  storageModeBody: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
   },
   avatarStack: {
     alignItems: 'center',

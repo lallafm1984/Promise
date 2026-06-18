@@ -58,6 +58,7 @@ export interface ScheduleItem {
   timeLabel: string;
   location: string;
   status: 'READY' | 'WAITING' | 'REMINDER_ON';
+  participants?: Participant[];
 }
 
 export type ScheduleSource = 'CARD' | 'MANUAL';

@@ -22,6 +22,7 @@ import {
   Clock3,
   ListChecks,
   MapPin,
+  MessageCircle,
   Plus,
   X,
 } from 'lucide-react-native';
@@ -46,6 +47,7 @@ import {
 import type { DisplayScheduleItem, ScheduleColorKey, TodoItem } from '@/types/promise';
 
 type ScheduleMode = 'SCHEDULE' | 'TODO';
+type ScheduleParticipant = NonNullable<DisplayScheduleItem['participants']>[number];
 
 const colorOptions: Array<{
   key: ScheduleColorKey;
@@ -62,6 +64,14 @@ const colorOptions: Array<{
 
 function getScheduleColor(key: ScheduleColorKey = 'sky') {
   return colorOptions.find((option) => option.key === key) ?? colorOptions[3];
+}
+
+function getScheduleParticipantDisplayName(participant: ScheduleParticipant) {
+  return participant.displayName?.trim() || participant.name;
+}
+
+function getScheduleParticipantComment(participant: ScheduleParticipant) {
+  return participant.comment?.trim();
 }
 
 const weekdayLabels = ['일', '월', '화', '수', '목', '금', '토'];
@@ -681,6 +691,8 @@ function SchedulePanel({
 
 function ScheduleItemCard({ item }: { item: DisplayScheduleItem }) {
   if (item.source === 'CARD') {
+    const participants = item.participants ?? [];
+
     return (
       <Card style={styles.cardScheduleCard}>
         <View style={styles.cardScheduleDateBlock}>
@@ -702,6 +714,38 @@ function ScheduleItemCard({ item }: { item: DisplayScheduleItem }) {
             <MapPin size={15} color={palette.primaryDeep} />
             <Text style={styles.manualInfoText}>{item.location}</Text>
           </View>
+          {participants.length > 0 ? (
+            <View style={styles.cardResponsePanel}>
+              <View style={styles.cardResponseHeader}>
+                <MessageCircle size={14} color={palette.primaryDeep} />
+                <Text style={styles.cardResponseTitle}>응답자 한마디</Text>
+              </View>
+              <View style={styles.cardResponseList}>
+                {participants.map((participant) => {
+                  const displayName = getScheduleParticipantDisplayName(participant);
+                  const comment = getScheduleParticipantComment(participant);
+
+                  return (
+                    <View key={participant.id} style={styles.cardResponseRow}>
+                      <View style={[styles.cardResponseAvatar, { backgroundColor: participant.color }]}>
+                        <Text style={styles.cardResponseAvatarText}>{participant.name}</Text>
+                      </View>
+                      <View style={styles.cardResponseCopy}>
+                        <Text style={styles.cardResponseName} numberOfLines={1}>
+                          {displayName}
+                        </Text>
+                        <Text
+                          style={comment ? styles.cardResponseComment : styles.cardResponseCommentMuted}
+                          numberOfLines={2}>
+                          {comment || '한마디 없음'}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
         </View>
       </Card>
     );
@@ -1387,6 +1431,68 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     minHeight: 36,
     paddingHorizontal: spacing.sm,
+  },
+  cardResponsePanel: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  cardResponseHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  cardResponseTitle: {
+    color: palette.primaryDeep,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  cardResponseList: {
+    gap: spacing.xs,
+  },
+  cardResponseRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  cardResponseAvatar: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  cardResponseAvatarText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  cardResponseCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  cardResponseName: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  cardResponseComment: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
+  },
+  cardResponseCommentMuted: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
   },
   manualScheduleCard: {
     alignItems: 'center',

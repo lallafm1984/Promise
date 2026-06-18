@@ -430,7 +430,7 @@ export const supabasePromiseRepository: PromiseRepository = {
   async listScheduleItems() {
     const client = assertSupabase();
     const user = await getAuthenticatedUser();
-    const [{ data, error }, receivedConfirmedCards] = await Promise.all([
+    const [{ data, error }, receivedConfirmedCards, ownedConfirmedCards] = await Promise.all([
       client
         .from('appointments')
         .select('id, card_id, title, location, starts_at, ends_at')
@@ -438,23 +438,31 @@ export const supabasePromiseRepository: PromiseRepository = {
         .not('card_id', 'is', null)
         .order('starts_at', { ascending: true }),
       listCardsByRecipient(['CONFIRMED']),
+      listCardsByOwner(['CONFIRMED']),
     ]);
 
     if (error) {
       throw error;
     }
 
-    const ownerScheduleItems = ((data ?? []) as AppointmentRow[]).map<ScheduleItem>((appointment) => ({
-      id: appointment.id,
-      cardId: appointment.card_id ?? appointment.id,
-      title: appointment.title,
-      startsAt: appointment.starts_at,
-      endsAt: appointment.ends_at,
-      dateLabel: formatScheduleDateLabel(appointment.starts_at),
-      timeLabel: formatScheduleTimeLabel(appointment.starts_at, appointment.ends_at),
-      location: appointment.location,
-      status: 'REMINDER_ON',
-    }));
+    const ownedConfirmedCardById = new Map(ownedConfirmedCards.map((card) => [card.id, card]));
+    const ownerScheduleItems = ((data ?? []) as AppointmentRow[]).map<ScheduleItem>((appointment) => {
+      const cardId = appointment.card_id ?? appointment.id;
+      const card = ownedConfirmedCardById.get(cardId);
+
+      return {
+        id: appointment.id,
+        cardId,
+        title: appointment.title,
+        startsAt: appointment.starts_at,
+        endsAt: appointment.ends_at,
+        dateLabel: formatScheduleDateLabel(appointment.starts_at),
+        timeLabel: formatScheduleTimeLabel(appointment.starts_at, appointment.ends_at),
+        location: appointment.location,
+        status: 'REMINDER_ON',
+        participants: card?.participants.map((participant) => ({ ...participant })) ?? [],
+      };
+    });
     const ownerCardIds = new Set(ownerScheduleItems.map((item) => item.cardId));
     const receivedScheduleItems = receivedConfirmedCards
       .map((card) => buildScheduleItemFromConfirmedCard(card))

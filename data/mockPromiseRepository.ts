@@ -44,8 +44,15 @@ let cards: PromiseCard[] = [
       },
     ],
     participants: [
-      { id: 'p-minseo', name: '민', color: '#FFD6E7', choice: 'YES' },
-      { id: 'p-harin', name: '린', color: '#FFE0B8', choice: 'UNANSWERED' },
+      {
+        id: 'p-minseo',
+        name: '민',
+        displayName: '민서',
+        comment: '조금 늦을 수 있어요',
+        color: '#FFD6E7',
+        choice: 'YES',
+      },
+      { id: 'p-harin', name: '린', displayName: '하린', comment: '', color: '#FFE0B8', choice: 'UNANSWERED' },
     ],
   },
   {
@@ -107,8 +114,15 @@ let cards: PromiseCard[] = [
       },
     ],
     participants: [
-      { id: 'p-minseo-movie', name: '민', color: '#FFD6E7', choice: 'YES' },
-      { id: 'p-jiwoo', name: '우', color: '#BFE8FF', choice: 'YES' },
+      {
+        id: 'p-minseo-movie',
+        name: '민',
+        displayName: '민서',
+        comment: '끝나고 커피도 좋아요',
+        color: '#FFD6E7',
+        choice: 'YES',
+      },
+      { id: 'p-jiwoo', name: '우', displayName: '지우', comment: '예매 시간 맞춰 갈게요', color: '#BFE8FF', choice: 'YES' },
     ],
   },
   {
@@ -134,8 +148,8 @@ let cards: PromiseCard[] = [
       },
     ],
     participants: [
-      { id: 'p-minseo-past', name: '민', color: '#FFD6E7', choice: 'YES' },
-      { id: 'p-seoa', name: '아', color: '#FFC9BA', choice: 'YES' },
+      { id: 'p-minseo-past', name: '민', displayName: '민서', comment: '', color: '#FFD6E7', choice: 'YES' },
+      { id: 'p-seoa', name: '아', displayName: '서아', comment: '조용한 자리면 좋아요', color: '#FFC9BA', choice: 'YES' },
     ],
   },
 ];
@@ -151,6 +165,16 @@ let schedule: ScheduleItem[] = [
     timeLabel: '19:30 - 20:30',
     location: '성수 카페',
     status: 'WAITING',
+    participants: [
+      {
+        id: 'p-minseo',
+        name: '민',
+        displayName: '민서',
+        comment: '조금 늦을 수 있어요',
+        color: '#FFD6E7',
+        choice: 'YES',
+      },
+    ],
   },
   {
     id: 'schedule-gangnam-movie',
@@ -162,6 +186,16 @@ let schedule: ScheduleItem[] = [
     timeLabel: '17:00 - 19:20',
     location: '강남 CGV',
     status: 'REMINDER_ON',
+    participants: [
+      {
+        id: 'p-jiwoo',
+        name: '우',
+        displayName: '지우',
+        comment: '예매 시간 맞춰 갈게요',
+        color: '#BFE8FF',
+        choice: 'YES',
+      },
+    ],
   },
 ];
 

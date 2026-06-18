@@ -298,6 +298,16 @@ describe('card menu helpers', () => {
       ...baseCard,
       status: 'CONFIRMED',
       requesterName: '하린',
+      participants: [
+        {
+          id: 'profile-minseo',
+          name: '민',
+          displayName: '민서',
+          comment: '조금 늦을 수 있어요',
+          color: '#FFD6E7',
+          choice: 'YES',
+        },
+      ],
     };
 
     expect(buildScheduleItemFromConfirmedCard(receivedConfirmedCard)).toEqual({
@@ -310,6 +320,16 @@ describe('card menu helpers', () => {
       timeLabel: '19:30 - 20:30',
       location: '성수 카페',
       status: 'REMINDER_ON',
+      participants: [
+        {
+          id: 'profile-minseo',
+          name: '민',
+          displayName: '민서',
+          comment: '조금 늦을 수 있어요',
+          color: '#FFD6E7',
+          choice: 'YES',
+        },
+      ],
     });
 
     expect(buildScheduleItemFromConfirmedCard({ ...receivedConfirmedCard, selectedSlotId: 'missing' })).toBeNull();

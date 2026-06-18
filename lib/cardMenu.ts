@@ -387,6 +387,7 @@ export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleI
       : `${padTwo(startDate.getHours())}:${padTwo(startDate.getMinutes())}`,
     location: card.location,
     status: 'REMINDER_ON',
+    participants: card.participants.map((participant) => ({ ...participant })),
   };
 }
 

@@ -1,7 +1,8 @@
-import { createElement, useMemo, useState, type CSSProperties } from 'react';
+import { createElement, useMemo, useRef, useState, type CSSProperties } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Link2, MapPin, MessageCircle, Send, UsersRound, X } from 'lucide-react-native';
-import { Modal, Platform, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { AlertTriangle, Link2, MapPin, MessageCircle, Send, UsersRound, X } from 'lucide-react-native';
+import { Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import {
   CandidateTimeFields,
@@ -9,38 +10,45 @@ import {
   DraftPreviewCard,
   ModeSelector,
 } from '@/components/card-menu';
-import { ActionButton, AppScreen, Card, StorageModeNotice } from '@/components/ui';
+import { ActionButton, AppScreen, Card } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
 import { useManagedCards } from '@/hooks/useManagedCards';
 import {
   buildShareMessage,
   compactDraftTimes,
+  createDefaultCardDraft,
   createDefaultDraftTime,
-  createDefaultDraftTimes,
   ensureDraftTimeCount,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
   getCandidateEndsAt,
   getGeneratedCardTitle,
   getModeLabel,
-  getRecipientProfileIds,
   removeDraftTimeAtIndex,
   validateCardDraft,
   type CardDraft,
 } from '@/lib/cardMenu';
+import { getDeliveredCardManagePath } from '@/lib/managedCards';
+import {
+  UNSHAREABLE_PREVIEW_CARD_MESSAGE,
+  getShareablePreviewCard,
+} from '@/lib/previewActions';
+import { getPreviewFriendOptions, getPreviewRecipientProfileIds, selectOnePreviewFriend } from '@/lib/previewFriends';
 import type { AppointmentMode, PromiseCard } from '@/types/promise';
 
 const INITIAL_DRAFT: CardDraft = {
-  mode: 'DIRECT',
-  times: createDefaultDraftTimes(2),
-  location: '',
-  message: '',
+  ...createDefaultCardDraft(),
 };
+const MODAL_BACKDROP_COLOR = 'rgba(75, 52, 40, 0.42)';
+const DUPLICATE_TIME_ERROR = '후보 시간을 서로 다르게 입력해 주세요.';
+const CARD_BASE_URL = (process.env.EXPO_PUBLIC_CARD_BASE_URL ?? 'https://whenbollae.app').replace(/\/+$/, '');
 
 export default function CreateCardScreen() {
-  const { addManagedCard, persisted: cardsPersisted } = useManagedCards();
-  const { friends } = useFriends();
+  const router = useRouter();
+  const screenScrollRef = useRef<ScrollView>(null);
+  const { addManagedCard } = useManagedCards();
+  const { friends, isLoading: isFriendsLoading } = useFriends();
   const [mode, setMode] = useState<AppointmentMode>(INITIAL_DRAFT.mode);
   const [times, setTimes] = useState<string[]>(INITIAL_DRAFT.times);
   const [location, setLocation] = useState(INITIAL_DRAFT.location);
@@ -49,7 +57,9 @@ export default function CreateCardScreen() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [previewCard, setPreviewCard] = useState<PromiseCard | null>(null);
   const [isFriendPickerOpen, setIsFriendPickerOpen] = useState(false);
+  const [isPreviewActionPending, setIsPreviewActionPending] = useState(false);
   const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>([]);
+  const [validationNotice, setValidationNotice] = useState<string | null>(null);
 
   const draft = useMemo<CardDraft>(
     () => ({
@@ -68,11 +78,16 @@ export default function CreateCardScreen() {
     [draft, mode, times],
   );
   const visibleTimes = mode === 'DIRECT' ? [times[0] ?? createDefaultDraftTime(0)] : ensureDraftTimeCount(times, 2);
+  const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
+    () => getPreviewFriendOptions(friends),
+    [friends],
+  );
 
   function handleModeChange(nextMode: AppointmentMode) {
     setMode(nextMode);
     setFeedback(null);
     setPreviewCard(null);
+    setValidationNotice(null);
 
     if (nextMode === 'POLL') {
       setTimes((currentTimes) => ensureDraftTimeCount(currentTimes, 2));
@@ -90,6 +105,7 @@ export default function CreateCardScreen() {
     );
     setPreviewCard(null);
     setFeedback(null);
+    setValidationNotice(null);
   }
 
   function handleAddTime() {
@@ -105,6 +121,7 @@ export default function CreateCardScreen() {
     });
     setPreviewCard(null);
     setFeedback(null);
+    setValidationNotice(null);
   }
 
   function handleRemoveTime(index: number) {
@@ -116,6 +133,7 @@ export default function CreateCardScreen() {
       }
 
       setFeedback(null);
+      setValidationNotice(null);
       return result.times;
     });
     setPreviewCard(null);
@@ -125,12 +143,19 @@ export default function CreateCardScreen() {
     const validation = validateCardDraft(activeDraft);
 
     if (!validation.valid) {
-      setFeedback(validation.error);
+      if (validation.error === DUPLICATE_TIME_ERROR) {
+        setValidationNotice(validation.error);
+        setFeedback(null);
+      } else {
+        setFeedback(validation.error);
+      }
       setPreviewCard(null);
       return;
     }
 
     setPreviewCard(buildPreviewCard(activeDraft));
+    setIsFriendPickerOpen(false);
+    setSelectedFriendIds([]);
     setFeedback(null);
   }
 
@@ -143,11 +168,47 @@ export default function CreateCardScreen() {
     return addManagedCard(publishedCard);
   }
 
+  function goToDeliveredCard(card: PromiseCard) {
+    resetDraft();
+    router.replace(getDeliveredCardManagePath(card, `after-create-${Date.now()}`));
+  }
+
+  function resetDraft() {
+    const nextDraft = createDefaultCardDraft();
+
+    setMode(nextDraft.mode);
+    setTimes(nextDraft.times);
+    setLocation(nextDraft.location);
+    setMessage(nextDraft.message);
+    setIsMessageOpen(false);
+    setFeedback(null);
+    setPreviewCard(null);
+    setIsFriendPickerOpen(false);
+    setIsPreviewActionPending(false);
+    setSelectedFriendIds([]);
+    setValidationNotice(null);
+  }
+
+  function scrollFocusedInputIntoView() {
+    if (Platform.OS === 'web') {
+      return;
+    }
+
+    setTimeout(() => {
+      screenScrollRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+  }
+
   function closePreview() {
     setPreviewCard(null);
     setFeedback(null);
     setIsFriendPickerOpen(false);
+    setIsPreviewActionPending(false);
     setSelectedFriendIds([]);
+  }
+
+  function getPreviewActionFeedback(error: unknown, fallback: string) {
+    return error instanceof Error && error.message ? error.message : fallback;
   }
 
   async function handleSharePreview() {
@@ -155,20 +216,25 @@ export default function CreateCardScreen() {
       return;
     }
 
+    setIsPreviewActionPending(true);
+
     try {
-      const saved = await publishPreview(previewCard);
-      const result = await Share.share({ message: buildShareMessage(saved.card) });
+      const shareable = await getShareablePreviewCard(previewCard, publishPreview);
+      const result = await Share.share({
+        message: buildShareMessage(shareable.card),
+        title: shareable.card.title,
+        url: shareable.card.sharedUrl,
+      });
       if (result.action === Share.dismissedAction) {
-        setFeedback(saved.persisted ? '카드는 저장됐고 공유는 취소됐어요.' : '공유가 취소됐어요. 로그인 전이라 카드는 이 기기에만 저장돼요.');
         setPreviewCard(null);
+        setFeedback(null);
         return;
       }
-      setPreviewCard(null);
-      setFeedback(
-        saved.persisted ? '카톡 공유를 열었고 카드가 저장됐어요.' : '카톡 공유를 열었어요. 로그인 전이라 이 기기에만 저장돼요.',
-      );
-    } catch {
-      setFeedback('공유를 열 수 없어요. 다시 시도해 주세요.');
+      goToDeliveredCard(shareable.card);
+    } catch (error) {
+      setFeedback(getPreviewActionFeedback(error, '공유를 열 수 없어요. 다시 시도해 주세요.'));
+    } finally {
+      setIsPreviewActionPending(false);
     }
   }
 
@@ -177,32 +243,27 @@ export default function CreateCardScreen() {
       return;
     }
 
+    setIsPreviewActionPending(true);
+
     try {
-      const saved = await publishPreview(previewCard);
-      await Clipboard.setStringAsync(saved.card.sharedUrl);
-      setPreviewCard(null);
-      setFeedback(
-        saved.persisted ? '공유 링크를 복사하고 카드가 저장됐어요.' : '공유 링크를 복사했어요. 로그인 전이라 이 기기에만 저장돼요.',
-      );
-    } catch {
-      setFeedback('링크를 복사하지 못했어요. 다시 시도해 주세요.');
+      const shareable = await getShareablePreviewCard(previewCard, publishPreview);
+      await Clipboard.setStringAsync(shareable.card.sharedUrl);
+      goToDeliveredCard(shareable.card);
+    } catch (error) {
+      setFeedback(getPreviewActionFeedback(error, '링크를 복사하지 못했어요. 다시 시도해 주세요.'));
+    } finally {
+      setIsPreviewActionPending(false);
     }
   }
 
   function handleSendToAppFriend() {
-    if (friends.length === 0) {
-      setFeedback('먼저 친구 메뉴에서 친구를 추가해 주세요.');
-      return;
-    }
-
     setIsFriendPickerOpen(true);
+    setSelectedFriendIds([]);
     setFeedback(null);
   }
 
   function toggleFriendSelection(friendId: string) {
-    setSelectedFriendIds((currentIds) =>
-      currentIds.includes(friendId) ? currentIds.filter((currentId) => currentId !== friendId) : [...currentIds, friendId],
-    );
+    setSelectedFriendIds((currentIds) => selectOnePreviewFriend(currentIds, friendId));
   }
 
   async function handleConfirmFriendSend() {
@@ -211,25 +272,22 @@ export default function CreateCardScreen() {
       return;
     }
 
-    const selectedFriends = friends.filter((friend) => selectedFriendIds.includes(friend.id));
-    const selectedNames = selectedFriends.map((friend) => friend.displayName).join(', ');
-    const recipientProfileIds = getRecipientProfileIds(friends, selectedFriendIds);
+    const recipientProfileIds = getPreviewRecipientProfileIds(friends, selectedFriendIds);
+
+    setIsPreviewActionPending(true);
 
     try {
-      const saved = await publishPreview({
+      const saved = await getShareablePreviewCard({
         ...previewCard,
         recipientProfileIds,
-      });
-      setPreviewCard(null);
-      setIsFriendPickerOpen(false);
-      setSelectedFriendIds([]);
+      }, publishPreview);
+      goToDeliveredCard(saved.card);
+    } catch (error) {
       setFeedback(
-        saved.persisted
-          ? `${selectedNames}님에게 앱 카드로 보냈고 카드가 저장됐어요.`
-          : `${selectedNames}님에게 앱 카드로 보냈어요. 로그인 전이라 이 기기에만 저장돼요.`,
+        getPreviewActionFeedback(error, UNSHAREABLE_PREVIEW_CARD_MESSAGE),
       );
-    } catch {
-      setFeedback('카드를 저장하지 못했어요. 다시 시도해 주세요.');
+    } finally {
+      setIsPreviewActionPending(false);
     }
   }
 
@@ -254,35 +312,53 @@ export default function CreateCardScreen() {
       {isFriendPickerOpen ? (
         <View style={styles.friendPicker}>
           <Text style={styles.friendPickerTitle}>보낼 친구 선택</Text>
-          <View style={styles.friendPickerList}>
-            {friends.map((friend) => {
-              const selected = selectedFriendIds.includes(friend.id);
+          {isFriendsLoading ? <Text style={styles.friendPickerNotice}>친구 목록을 불러오는 중이에요.</Text> : null}
+          {!isFriendsLoading && isUsingTestFriends ? (
+            <Text style={styles.friendPickerNotice}>실제 앱 친구가 없어 테스트 친구로 보내기 흐름을 확인할 수 있어요.</Text>
+          ) : null}
+          {!isFriendsLoading ? (
+            <View style={styles.friendPickerList}>
+              {previewFriendOptions.map((friend) => {
+                const selected = selectedFriendIds.includes(friend.id);
 
-              return (
-                <Pressable
-                  key={friend.id}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: selected }}
-                  onPress={() => toggleFriendSelection(friend.id)}
-                  style={({ pressed }) => [styles.friendPickerRow, selected && styles.selectedFriendPickerRow, pressed && styles.pressed]}>
-                  <View style={[styles.friendAvatar, { backgroundColor: friend.color }]}>
-                    <Text style={styles.friendAvatarText}>{friend.avatarLabel}</Text>
-                  </View>
-                  <View style={styles.friendPickerCopy}>
-                    <Text style={styles.friendPickerName}>{friend.displayName}</Text>
-                    <Text style={styles.friendPickerMeta}>@{friend.handle}</Text>
-                  </View>
-                  <View style={[styles.friendCheck, selected && styles.selectedFriendCheck]}>
-                    <Text style={[styles.friendCheckText, selected && styles.selectedFriendCheckText]}>{selected ? '선택' : '대기'}</Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
+                return (
+                  <Pressable
+                    key={friend.id}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: selected }}
+                    disabled={isPreviewActionPending}
+                    onPress={() => toggleFriendSelection(friend.id)}
+                    style={({ pressed }) => [
+                      styles.friendPickerRow,
+                      selected && styles.selectedFriendPickerRow,
+                      pressed && !isPreviewActionPending && styles.pressed,
+                    ]}>
+                    <View style={[styles.friendAvatar, { backgroundColor: friend.color }]}>
+                      <Text style={styles.friendAvatarText}>{friend.avatarLabel}</Text>
+                    </View>
+                    <View style={styles.friendPickerCopy}>
+                      <Text style={styles.friendPickerName}>{friend.displayName}</Text>
+                      <Text style={styles.friendPickerMeta}>@{friend.handle}</Text>
+                    </View>
+                    <View style={[styles.friendCheck, selected && styles.selectedFriendCheck]}>
+                      <Text style={[styles.friendCheckText, selected && styles.selectedFriendCheckText]}>{selected ? '선택' : '대기'}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
           <View style={styles.secondaryActionRow}>
-            <ActionButton label="취소" variant="secondary" fullWidth onPress={() => setIsFriendPickerOpen(false)} />
             <ActionButton
-              label="보내기"
+              label="취소"
+              variant="secondary"
+              disabled={isPreviewActionPending}
+              fullWidth
+              onPress={() => setIsFriendPickerOpen(false)}
+            />
+            <ActionButton
+              label={isPreviewActionPending ? '보내는 중' : '보내기'}
+              disabled={isPreviewActionPending || selectedFriendIds.length === 0}
               fullWidth
               onPress={() => {
                 void handleConfirmFriendSend();
@@ -296,6 +372,7 @@ export default function CreateCardScreen() {
             label="카톡 공유"
             variant="kakao"
             icon={<Send size={18} color={palette.onLight} />}
+            disabled={isPreviewActionPending}
             fullWidth
             onPress={() => {
               void handleSharePreview();
@@ -306,6 +383,7 @@ export default function CreateCardScreen() {
               label="앱 친구에게 보내기"
               variant="secondary"
               icon={<UsersRound size={18} color={palette.primaryDeep} />}
+              disabled={isPreviewActionPending}
               fullWidth
               onPress={handleSendToAppFriend}
             />
@@ -313,6 +391,7 @@ export default function CreateCardScreen() {
               label="링크 복사"
               variant="secondary"
               icon={<Link2 size={18} color={palette.primaryDeep} />}
+              disabled={isPreviewActionPending}
               fullWidth
               onPress={() => {
                 void handleCopyPreviewLink();
@@ -326,7 +405,7 @@ export default function CreateCardScreen() {
 
   return (
     <>
-      <AppScreen>
+      <AppScreen keyboardAware scrollRef={screenScrollRef}>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -337,8 +416,6 @@ export default function CreateCardScreen() {
           <Text style={styles.subtitle}>날짜와 시간을 고르고 장소만 적으면 바로 공유돼요.</Text>
         </View>
       </View>
-
-      <StorageModeNotice persisted={cardsPersisted} surface="cards" />
 
       <ModeSelector value={mode} onChange={handleModeChange} />
 
@@ -355,10 +432,12 @@ export default function CreateCardScreen() {
           value={location}
           placeholder="예: 성수 카페"
           icon={<MapPin size={16} color={palette.primaryDeep} />}
+          onFocus={scrollFocusedInputIntoView}
           onChangeText={(nextLocation) => {
             setLocation(nextLocation);
             setPreviewCard(null);
             setFeedback(null);
+            setValidationNotice(null);
           }}
         />
         {isMessageOpen ? (
@@ -368,10 +447,12 @@ export default function CreateCardScreen() {
             placeholder="예: 늦으면 커피 내가 살게"
             icon={<MessageCircle size={16} color={palette.primaryDeep} />}
             multiline
+            onFocus={scrollFocusedInputIntoView}
             onChangeText={(nextMessage) => {
               setMessage(nextMessage);
               setPreviewCard(null);
               setFeedback(null);
+              setValidationNotice(null);
             }}
           />
         ) : (
@@ -379,7 +460,10 @@ export default function CreateCardScreen() {
             label="+ 한마디 추가"
             variant="secondary"
             icon={<MessageCircle size={17} color={palette.primaryDeep} />}
-            onPress={() => setIsMessageOpen(true)}
+            onPress={() => {
+              setIsMessageOpen(true);
+              scrollFocusedInputIntoView();
+            }}
           />
         )}
         <ActionButton
@@ -398,9 +482,34 @@ export default function CreateCardScreen() {
         : null}
       {Platform.OS !== 'web' ? (
         <Modal animationType="fade" onRequestClose={closePreview} transparent visible={previewCard !== null}>
-          <View style={styles.modalBackdrop}>{previewPanel}</View>
+          <View style={styles.modalBackdrop}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              showsVerticalScrollIndicator={false}
+              style={styles.modalScrollView}>
+              {previewPanel}
+            </ScrollView>
+          </View>
         </Modal>
       ) : null}
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setValidationNotice(null)}
+        transparent
+        visible={validationNotice !== null}>
+        <View style={styles.modalBackdrop}>
+          <Card style={styles.validationModal}>
+            <View style={styles.validationIcon}>
+              <AlertTriangle size={24} color={palette.danger} />
+            </View>
+            <View style={styles.validationCopy}>
+              <Text style={styles.validationTitle}>후보 시간 확인</Text>
+              <Text style={styles.validationBody}>{validationNotice}</Text>
+            </View>
+            <ActionButton label="확인" fullWidth onPress={() => setValidationNotice(null)} />
+          </Card>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -418,7 +527,7 @@ function buildPreviewCard(draft: CardDraft): PromiseCard {
     hostName: '나',
     location: draft.location.trim(),
     message: draft.message.trim(),
-    sharedUrl: `https://whenbollae.app/c/${id}`,
+    sharedUrl: `${CARD_BASE_URL}/c/${id}`,
     createdAt,
     selectedSlotId: `${id}-slot-1`,
     candidates: times.map((time, index) => ({
@@ -522,9 +631,8 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     alignItems: 'center',
-    backgroundColor: 'rgba(75, 52, 40, 0.52)',
+    backgroundColor: MODAL_BACKDROP_COLOR,
     bottom: 0,
-    elevation: 20,
     flex: 1,
     justifyContent: 'center',
     left: 0,
@@ -534,19 +642,23 @@ const styles = StyleSheet.create({
     top: 0,
     zIndex: 1000,
   },
+  modalScrollView: {
+    width: '100%',
+  },
+  modalScrollContent: {
+    alignItems: 'center',
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+  },
   modalPanel: {
     backgroundColor: palette.surface,
     borderColor: palette.lineStrong,
     borderRadius: radius.xl,
     borderWidth: 2,
-    elevation: 24,
     gap: spacing.md,
     maxWidth: 390,
     padding: spacing.md,
-    shadowColor: palette.ink,
-    shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.2,
-    shadowRadius: 28,
     width: '100%',
     zIndex: 1001,
   },
@@ -597,6 +709,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  validationModal: {
+    gap: spacing.md,
+    maxWidth: 390,
+    width: '100%',
+  },
+  validationIcon: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: palette.coralSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    height: 46,
+    justifyContent: 'center',
+    width: 46,
+  },
+  validationCopy: {
+    gap: spacing.xs,
+  },
+  validationTitle: {
+    color: palette.ink,
+    fontSize: 20,
+    fontWeight: '900',
+    lineHeight: 26,
+  },
+  validationBody: {
+    color: palette.inkMuted,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
   friendPicker: {
     gap: spacing.sm,
   },
@@ -607,6 +750,17 @@ const styles = StyleSheet.create({
   },
   friendPickerList: {
     gap: spacing.xs,
+  },
+  friendPickerNotice: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    color: palette.inkMuted,
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 19,
+    padding: spacing.md,
   },
   friendPickerRow: {
     alignItems: 'center',
@@ -675,13 +829,14 @@ const styles = StyleSheet.create({
 const webModalBackdropStyle = {
   alignItems: 'center',
   backdropFilter: 'blur(1px)',
-  backgroundColor: 'rgba(75, 52, 40, 0.52)',
+  backgroundColor: MODAL_BACKDROP_COLOR,
   boxSizing: 'border-box',
   display: 'flex',
   height: '100dvh',
   inset: 0,
   justifyContent: 'center',
   minHeight: '100vh',
+  overflowY: 'auto',
   padding: spacing.md,
   position: 'fixed',
   width: '100vw',

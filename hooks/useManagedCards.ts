@@ -2,6 +2,12 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react';
 
 import { getActivePromiseRepository } from '@/data/promiseRepository';
 import { usePromiseData } from '@/hooks/usePromiseData';
+import {
+  mergeManagedCardIntoLocalCards,
+  mergeManagedCardsView,
+  mergeRecipientProfileIds,
+  removeManagedCardFromLocalState,
+} from '@/lib/managedCards';
 import type { PromiseCard, PromiseRepository } from '@/types/promise';
 
 let localCards: PromiseCard[] = [];
@@ -33,44 +39,80 @@ export function useManagedCards() {
   const removedIds = useSyncExternalStore(subscribe, getRemovedSnapshot, getRemovedSnapshot);
 
   const managedCards = useMemo(
-    () => [
-      ...createdCards,
-      ...recentCards.filter(
-        (card) =>
-          !removedIds.includes(card.id) && !createdCards.some((createdCard) => createdCard.id === card.id),
-      ),
-    ],
+    () => mergeManagedCardsView(createdCards, recentCards, removedIds),
     [createdCards, recentCards, removedIds],
   );
 
   const addManagedCard = useCallback(async (card: PromiseCard) => {
     const { persisted, repository } = await getActivePromiseRepository();
-    const savedCard = await repository.createManagedCard(card);
+    let savedCard = card;
+    let didPersist = persisted;
+    let saveFailed = false;
+
+    try {
+      savedCard = await repository.createManagedCard(card);
+    } catch (error) {
+      console.warn('[PromiseCards] Failed to create managed card', error);
+      didPersist = false;
+      saveFailed = true;
+    }
 
     removedCardIds = removedCardIds.filter((cardId) => cardId !== card.id);
-    localCards = [
-      savedCard,
-      ...localCards.filter((currentCard) => currentCard.id !== savedCard.id && currentCard.id !== card.id),
-    ];
+    localCards = mergeManagedCardIntoLocalCards(localCards, savedCard, card.id);
     emitChange();
 
     return {
       card: savedCard,
-      persisted,
+      persisted: didPersist,
+      saveFailed,
     };
   }, []);
 
   const removeManagedCard = useCallback(async (cardId: string) => {
     const { repository } = await getActivePromiseRepository();
-    await repository.deleteManagedCard(cardId);
+    let deleteFailed = false;
 
-    localCards = localCards.filter((currentCard) => currentCard.id !== cardId);
-
-    if (!removedCardIds.includes(cardId)) {
-      removedCardIds = [...removedCardIds, cardId];
+    try {
+      await repository.deleteManagedCard(cardId);
+    } catch (error) {
+      console.warn('[PromiseCards] Failed to delete managed card', error);
+      deleteFailed = true;
     }
 
+    const removedState = removeManagedCardFromLocalState(localCards, removedCardIds, cardId);
+    localCards = removedState.localCards;
+    removedCardIds = removedState.removedCardIds;
+
     emitChange();
+
+    return {
+      deleteFailed,
+    };
+  }, []);
+
+  const sendManagedCardToRecipients = useCallback(async (card: PromiseCard, recipientProfileIds: string[]) => {
+    const { persisted, repository } = await getActivePromiseRepository();
+    let savedCard = card;
+    let didPersist = persisted;
+    let saveFailed = false;
+
+    try {
+      savedCard = await repository.sendManagedCardToRecipients(card.id, recipientProfileIds);
+    } catch (error) {
+      console.warn('[PromiseCards] Failed to send managed card to recipients', error);
+      savedCard = mergeRecipientProfileIds(card, recipientProfileIds);
+      didPersist = false;
+      saveFailed = true;
+    }
+
+    localCards = mergeManagedCardIntoLocalCards(localCards, savedCard, card.id);
+    emitChange();
+
+    return {
+      card: savedCard,
+      persisted: didPersist,
+      saveFailed,
+    };
   }, []);
 
   const confirmManagedCard = useCallback(async (cardId: string, candidateId: string) => {
@@ -104,6 +146,7 @@ export function useManagedCards() {
     managedCards,
     addManagedCard,
     removeManagedCard,
+    sendManagedCardToRecipients,
     confirmManagedCard,
     respondToReceivedCard,
     isLoading,

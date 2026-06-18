@@ -54,13 +54,23 @@ function parseDraftDateTime(value: string): Date | null {
 
 export function createDefaultDraftTime(slotIndex = 0, baseDate = new Date()): string {
   const date = new Date(baseDate);
-  date.setDate(date.getDate() + slotIndex + 1);
-  date.setHours(DEFAULT_MEETING_HOUR, DEFAULT_MEETING_MINUTE, 0, 0);
+  const candidateHour = DEFAULT_MEETING_HOUR + slotIndex;
+  date.setDate(date.getDate() + 1 + Math.floor(candidateHour / 24));
+  date.setHours(candidateHour % 24, DEFAULT_MEETING_MINUTE, 0, 0);
   return date.toISOString();
 }
 
 export function createDefaultDraftTimes(count = 2, baseDate = new Date()): string[] {
   return Array.from({ length: count }, (_, index) => createDefaultDraftTime(index, baseDate));
+}
+
+export function createDefaultCardDraft(baseDate = new Date()): CardDraft {
+  return {
+    mode: 'DIRECT',
+    times: createDefaultDraftTimes(2, baseDate),
+    location: '',
+    message: '',
+  };
 }
 
 export function isDraftTimeValid(value: string): boolean {
@@ -202,6 +212,16 @@ export function compactDraftTimes(times: string[]): string[] {
   return times.map((time) => time.trim()).filter(isDraftTimeValid);
 }
 
+function getDraftTimeKey(value: string): string {
+  const date = parseDraftDateTime(value) ?? new Date(createDefaultDraftTime());
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}-${date.getMinutes()}`;
+}
+
+function hasDuplicateDraftTimes(times: string[]): boolean {
+  const timeKeys = times.map(getDraftTimeKey);
+  return new Set(timeKeys).size !== timeKeys.length;
+}
+
 export function validateCardDraft(draft: CardDraft): DraftValidationResult {
   const times = compactDraftTimes(draft.times);
 
@@ -215,6 +235,10 @@ export function validateCardDraft(draft: CardDraft): DraftValidationResult {
 
   if (draft.mode === 'POLL' && times.length < 2) {
     return { valid: false, error: '언제볼래?는 후보 시간이 2개 이상 필요해요.' };
+  }
+
+  if (draft.mode === 'POLL' && hasDuplicateDraftTimes(times)) {
+    return { valid: false, error: '후보 시간을 서로 다르게 입력해 주세요.' };
   }
 
   return { valid: true };
@@ -322,7 +346,7 @@ export function mergeManagedCards(ownedCards: PromiseCard[], receivedCards: Prom
 }
 
 export function canDeleteManagedCard(card: PromiseCard, now = new Date()): boolean {
-  return !card.requesterName && getManagedStatusGroup(card, now) === 'PAST';
+  return ['PENDING', 'VOTING', 'CONFIRMED', 'PAST'].includes(getManagedStatusGroup(card, now));
 }
 
 export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleItem | null {

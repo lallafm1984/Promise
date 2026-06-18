@@ -9,6 +9,13 @@ export interface PromiseDataState {
   error: string | null;
 }
 
+let promiseDataRefreshChannelSequence = 0;
+
+export function createPromiseDataRefreshChannelName() {
+  promiseDataRefreshChannelSequence += 1;
+  return `promise-data-refresh-${promiseDataRefreshChannelSequence}`;
+}
+
 export function getPromiseDataLoadErrorState(_current: PromiseDataState, error: unknown): PromiseDataState {
   return {
     profile: null,

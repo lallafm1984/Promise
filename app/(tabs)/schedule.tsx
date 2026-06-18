@@ -27,7 +27,7 @@ import {
 } from 'lucide-react-native';
 
 import { CandidateTimeFields } from '@/components/card-menu';
-import { AppScreen, Card, Chip, SectionHeader, StorageModeNotice } from '@/components/ui';
+import { AppScreen, Card, Chip, SectionHeader } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
 import { usePromiseData } from '@/hooks/usePromiseData';
 import { useSchedulePlanner } from '@/hooks/useSchedulePlanner';
@@ -90,7 +90,6 @@ export default function ScheduleScreen() {
     todos,
     isLoading: plannerLoading,
     isMutating,
-    persisted: plannerPersisted,
     error: plannerError,
     createManualScheduleItem,
     createTodo,
@@ -395,8 +394,6 @@ export default function ScheduleScreen() {
           <Text style={styles.subtitle}>약속 일정과 해야 할 일을 날짜별로 확인해요.</Text>
         </View>
       </View>
-
-      <StorageModeNotice persisted={plannerPersisted} surface="schedule" />
 
       <View style={styles.modeTabs}>
         <ModeTab

@@ -1,17 +1,27 @@
-import { useMemo, useState } from 'react';
-import { useRouter } from 'expo-router';
-import { Modal, Share, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import * as Clipboard from 'expo-clipboard';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { AlertTriangle, Link2, Send, UsersRound, X } from 'lucide-react-native';
+import { Modal, Share, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ManagedCardsSection } from '@/components/card-menu';
-import { ActionButton, AppScreen, Card, StorageModeNotice } from '@/components/ui';
+import { DraftPreviewCard, ManagedCardsSection } from '@/components/card-menu';
+import { ActionButton, AppScreen, Card } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
+import { useFriends } from '@/hooks/useFriends';
 import { useManagedCards } from '@/hooks/useManagedCards';
 import {
   buildShareMessage,
+  canDeleteManagedCard,
   getManagedStatusGroup,
   type ManagedCardActionKind,
   type ManagedStatusGroup,
 } from '@/lib/cardMenu';
+import { getManagedCardDeleteConfirmation } from '@/lib/managedCards';
+import {
+  UNSHAREABLE_PREVIEW_CARD_MESSAGE,
+  isShareablePublicCard,
+} from '@/lib/previewActions';
+import { getPreviewFriendOptions, getPreviewRecipientProfileIds, selectOnePreviewFriend } from '@/lib/previewFriends';
 import type { PromiseCard } from '@/types/promise';
 import type { ReceivedCardResponseChoice } from '@/types/promise';
 
@@ -24,15 +34,42 @@ const statusTabs: Array<{ key: ManagedStatusGroup; label: string }> = [
 
 export default function ManageCardsScreen() {
   const router = useRouter();
-  const { managedCards, isLoading, persisted, error, removeManagedCard, confirmManagedCard, respondToReceivedCard } = useManagedCards();
+  const { group, scroll } = useLocalSearchParams<{ group?: string | string[]; scroll?: string | string[] }>();
+  const {
+    managedCards,
+    isLoading,
+    error,
+    removeManagedCard,
+    sendManagedCardToRecipients,
+    confirmManagedCard,
+    respondToReceivedCard,
+  } = useManagedCards();
+  const { friends, isLoading: isFriendsLoading } = useFriends();
   const [activeGroup, setActiveGroup] = useState<ManagedStatusGroup>('PENDING');
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [resultCard, setResultCard] = useState<PromiseCard | null>(null);
   const [responseCard, setResponseCard] = useState<PromiseCard | null>(null);
+  const [reshareCard, setReshareCard] = useState<PromiseCard | null>(null);
+  const [deleteConfirmCard, setDeleteConfirmCard] = useState<PromiseCard | null>(null);
+  const [isReshareFriendPickerOpen, setIsReshareFriendPickerOpen] = useState(false);
+  const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>([]);
+  const [isReshareActionPending, setIsReshareActionPending] = useState(false);
+  const [reshareFeedback, setReshareFeedback] = useState<string | null>(null);
+  const [isDeletingCard, setIsDeletingCard] = useState(false);
   const [responseChoices, setResponseChoices] = useState<Record<string, ReceivedCardResponseChoice>>({});
   const [isConfirming, setIsConfirming] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const now = useMemo(() => new Date(), [managedCards]);
+  const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
+    () => getPreviewFriendOptions(friends),
+    [friends],
+  );
+  useEffect(() => {
+    const routeGroup = Array.isArray(group) ? group[0] : group;
+
+    if (statusTabs.some((tab) => tab.key === routeGroup)) {
+      setActiveGroup(routeGroup as ManagedStatusGroup);
+    }
+  }, [group]);
   const statusCounts = useMemo(
     () =>
       statusTabs.reduce(
@@ -53,16 +90,10 @@ export default function ManageCardsScreen() {
     }
 
     if (action === 'RESHARE') {
-      try {
-        const result = await Share.share({ message: buildShareMessage(card) });
-        if (result.action === Share.dismissedAction) {
-          setFeedback('공유가 취소됐어요.');
-          return;
-        }
-        setFeedback('공유를 다시 열었어요.');
-      } catch {
-        setFeedback('공유를 열 수 없어요. 다시 시도해 주세요.');
-      }
+      setReshareCard(card);
+      setIsReshareFriendPickerOpen(false);
+      setSelectedFriendIds([]);
+      setReshareFeedback(null);
       return;
     }
 
@@ -80,15 +111,127 @@ export default function ManageCardsScreen() {
   }
 
   async function handleDeleteCard(card: PromiseCard) {
-    if (getManagedStatusGroup(card) !== 'PAST') {
+    if (!canDeleteManagedCard(card, now)) {
+      return;
+    }
+
+    setDeleteConfirmCard(card);
+  }
+
+  function closeDeleteConfirmModal() {
+    if (isDeletingCard) {
+      return;
+    }
+
+    setDeleteConfirmCard(null);
+  }
+
+  async function confirmDeleteCard() {
+    if (!deleteConfirmCard) {
       return;
     }
 
     try {
-      await removeManagedCard(card.id);
-      setFeedback('카드를 삭제했어요.');
+      setIsDeletingCard(true);
+      await removeManagedCard(deleteConfirmCard.id);
+      setDeleteConfirmCard(null);
+    } finally {
+      setIsDeletingCard(false);
+    }
+  }
+
+  function closeReshareModal() {
+    setReshareCard(null);
+    setIsReshareFriendPickerOpen(false);
+    setSelectedFriendIds([]);
+    setIsReshareActionPending(false);
+    setReshareFeedback(null);
+  }
+
+  async function handleReshareWithKakao() {
+    if (!reshareCard) {
+      return;
+    }
+
+    if (!isShareablePublicCard(reshareCard)) {
+      setReshareFeedback(UNSHAREABLE_PREVIEW_CARD_MESSAGE);
+      return;
+    }
+
+    setIsReshareActionPending(true);
+
+    try {
+      const result = await Share.share({
+        message: buildShareMessage(reshareCard),
+        title: reshareCard.title,
+        url: reshareCard.sharedUrl,
+      });
+      if (result.action !== Share.dismissedAction) {
+        closeReshareModal();
+      }
     } catch {
-      setFeedback('카드를 삭제하지 못했어요. 다시 시도해 주세요.');
+      setReshareFeedback('공유를 열 수 없어요. 다시 시도해 주세요.');
+    } finally {
+      setIsReshareActionPending(false);
+    }
+  }
+
+  async function handleCopyReshareLink() {
+    if (!reshareCard) {
+      return;
+    }
+
+    if (!isShareablePublicCard(reshareCard)) {
+      setReshareFeedback(UNSHAREABLE_PREVIEW_CARD_MESSAGE);
+      return;
+    }
+
+    setIsReshareActionPending(true);
+
+    try {
+      await Clipboard.setStringAsync(reshareCard.sharedUrl);
+      closeReshareModal();
+    } catch {
+      setReshareFeedback('링크를 복사하지 못했어요. 다시 시도해 주세요.');
+    } finally {
+      setIsReshareActionPending(false);
+    }
+  }
+
+  function openReshareFriendPicker() {
+    setIsReshareFriendPickerOpen(true);
+    setSelectedFriendIds([]);
+    setReshareFeedback(null);
+  }
+
+  function toggleReshareFriendSelection(friendId: string) {
+    setSelectedFriendIds((currentIds) => selectOnePreviewFriend(currentIds, friendId));
+  }
+
+  async function handleConfirmReshareFriendSend() {
+    if (!reshareCard || selectedFriendIds.length === 0) {
+      return;
+    }
+
+    if (!isShareablePublicCard(reshareCard)) {
+      setReshareFeedback(UNSHAREABLE_PREVIEW_CARD_MESSAGE);
+      return;
+    }
+
+    const recipientProfileIds = getPreviewRecipientProfileIds(friends, selectedFriendIds);
+
+    setIsReshareActionPending(true);
+
+    try {
+      if (!isUsingTestFriends) {
+        await sendManagedCardToRecipients(reshareCard, recipientProfileIds);
+      }
+
+      closeReshareModal();
+    } catch {
+      setReshareFeedback('카드를 보내지 못했어요. 다시 시도해 주세요.');
+    } finally {
+      setIsReshareActionPending(false);
     }
   }
 
@@ -97,11 +240,10 @@ export default function ManageCardsScreen() {
 
     try {
       await confirmManagedCard(card.id, candidateId);
-      setFeedback('선택한 시간으로 약속을 확정했어요.');
       setResultCard(null);
       setActiveGroup('CONFIRMED');
     } catch {
-      setFeedback('약속을 확정하지 못했어요. 다시 시도해 주세요.');
+      return;
     } finally {
       setIsConfirming(false);
     }
@@ -120,7 +262,6 @@ export default function ManageCardsScreen() {
       .filter((response): response is { candidateId: string; choice: ReceivedCardResponseChoice } => Boolean(response.choice));
 
     if (responses.length !== responseCard.candidates.length) {
-      setFeedback('모든 후보 시간에 응답해 주세요.');
       return;
     }
 
@@ -128,10 +269,9 @@ export default function ManageCardsScreen() {
 
     try {
       await respondToReceivedCard(responseCard.id, responses);
-      setFeedback('응답을 보냈어요.');
       setResponseCard(null);
     } catch {
-      setFeedback('응답을 보내지 못했어요. 다시 시도해 주세요.');
+      return;
     } finally {
       setIsResponding(false);
     }
@@ -149,9 +289,11 @@ export default function ManageCardsScreen() {
   const hasAllResponseChoices = responseCard
     ? responseCard.candidates.every((candidate) => Boolean(responseChoices[candidate.id]))
     : false;
+  const deleteConfirmation = deleteConfirmCard ? getManagedCardDeleteConfirmation(deleteConfirmCard) : null;
+  const routeScrollKey = Array.isArray(scroll) ? scroll[0] : scroll;
 
   return (
-    <AppScreen>
+    <AppScreen scrollToTopKey={routeScrollKey}>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -162,10 +304,6 @@ export default function ManageCardsScreen() {
           <Text style={styles.subtitle}>응답 대기, 투표 중, 확정된 약속을 상태별로 확인해요.</Text>
         </View>
       </View>
-
-      <StorageModeNotice persisted={persisted} surface="cards" />
-
-      {feedback ? <Text style={styles.feedback}>{feedback}</Text> : null}
 
       {error ? (
         <Card style={styles.noticeCard}>
@@ -198,8 +336,161 @@ export default function ManageCardsScreen() {
         cards={managedCards}
         activeGroup={activeGroup}
         onAction={(card, action) => void handleManagedAction(card, action)}
-        onDelete={activeGroup === 'PAST' ? (card) => void handleDeleteCard(card) : undefined}
+        onDelete={(card) => void handleDeleteCard(card)}
       />
+
+      <Modal
+        transparent
+        visible={deleteConfirmation !== null}
+        animationType="fade"
+        onRequestClose={closeDeleteConfirmModal}>
+        <View style={styles.modalBackdrop}>
+          {deleteConfirmation ? (
+            <Card style={styles.deleteModal}>
+              <View style={styles.deleteIcon}>
+                <AlertTriangle size={24} color={palette.danger} />
+              </View>
+              <View style={styles.deleteCopy}>
+                <Text style={styles.resultTitle}>{deleteConfirmation.title}</Text>
+                <Text style={styles.deleteBody}>{deleteConfirmation.body}</Text>
+              </View>
+              <View style={styles.deleteActions}>
+                <ActionButton
+                  label="취소"
+                  variant="secondary"
+                  disabled={isDeletingCard}
+                  fullWidth
+                  onPress={closeDeleteConfirmModal}
+                />
+                <ActionButton
+                  label={isDeletingCard ? '삭제 중' : deleteConfirmation.confirmLabel}
+                  variant="danger"
+                  disabled={isDeletingCard}
+                  fullWidth
+                  onPress={() => void confirmDeleteCard()}
+                />
+              </View>
+            </Card>
+          ) : null}
+        </View>
+      </Modal>
+
+      <Modal transparent visible={Boolean(reshareCard)} animationType="fade" onRequestClose={closeReshareModal}>
+        <View style={styles.modalBackdrop}>
+          <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false} style={styles.modalScrollView}>
+            {reshareCard ? (
+              <Card style={styles.reshareModal}>
+                <View style={styles.reshareHeader}>
+                  <View style={styles.reshareHeaderCopy}>
+                    <Text style={styles.resultKicker}>{reshareCard.mode === 'DIRECT' ? '이때볼래?' : '언제볼래?'}</Text>
+                    <Text style={styles.resultTitle}>공유 전 미리보기</Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="미리보기 닫기"
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={closeReshareModal}
+                    style={({ pressed }) => [styles.iconCloseButton, pressed && styles.pressed]}>
+                    <X size={20} color={palette.primaryDeep} />
+                  </Pressable>
+                </View>
+
+                <DraftPreviewCard card={reshareCard} />
+
+                {reshareFeedback ? <Text style={styles.reshareFeedback}>{reshareFeedback}</Text> : null}
+
+                {isReshareFriendPickerOpen ? (
+                  <View style={styles.friendPicker}>
+                    <Text style={styles.friendPickerTitle}>보낼 친구 선택</Text>
+                    {isFriendsLoading ? <Text style={styles.friendPickerNotice}>친구 목록을 불러오는 중이에요.</Text> : null}
+                    {!isFriendsLoading && isUsingTestFriends ? (
+                      <Text style={styles.friendPickerNotice}>실제 앱 친구가 없어 테스트 친구로 보내기 흐름을 확인할 수 있어요.</Text>
+                    ) : null}
+                    {!isFriendsLoading ? (
+                      <View style={styles.friendPickerList}>
+                        {previewFriendOptions.map((friend) => {
+                          const selected = selectedFriendIds.includes(friend.id);
+
+                          return (
+                            <Pressable
+                              key={friend.id}
+                              accessibilityRole="checkbox"
+                              accessibilityState={{ checked: selected }}
+                              disabled={isReshareActionPending}
+                              onPress={() => toggleReshareFriendSelection(friend.id)}
+                              style={({ pressed }) => [
+                                styles.friendPickerRow,
+                                selected && styles.selectedFriendPickerRow,
+                                pressed && !isReshareActionPending && styles.pressed,
+                              ]}>
+                              <View style={[styles.friendAvatar, { backgroundColor: friend.color }]}>
+                                <Text style={styles.friendAvatarText}>{friend.avatarLabel}</Text>
+                              </View>
+                              <View style={styles.friendPickerCopy}>
+                                <Text style={styles.friendPickerName}>{friend.displayName}</Text>
+                                <Text style={styles.friendPickerMeta}>@{friend.handle}</Text>
+                              </View>
+                              <View style={[styles.friendCheck, selected && styles.selectedFriendCheck]}>
+                                <Text style={[styles.friendCheckText, selected && styles.selectedFriendCheckText]}>
+                                  {selected ? '선택' : '대기'}
+                                </Text>
+                              </View>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                    <View style={styles.secondaryActionRow}>
+                      <ActionButton
+                        label="취소"
+                        variant="secondary"
+                        disabled={isReshareActionPending}
+                        fullWidth
+                        onPress={() => setIsReshareFriendPickerOpen(false)}
+                      />
+                      <ActionButton
+                        label={isReshareActionPending ? '보내는 중' : '보내기'}
+                        disabled={isReshareActionPending || selectedFriendIds.length === 0}
+                        fullWidth
+                        onPress={() => void handleConfirmReshareFriendSend()}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.previewActions}>
+                    <ActionButton
+                      label="카톡 공유"
+                      variant="kakao"
+                      icon={<Send size={18} color={palette.onLight} />}
+                      disabled={isReshareActionPending}
+                      fullWidth
+                      onPress={() => void handleReshareWithKakao()}
+                    />
+                    <View style={styles.secondaryActionRow}>
+                      <ActionButton
+                        label="앱 친구에게 보내기"
+                        variant="secondary"
+                        icon={<UsersRound size={18} color={palette.primaryDeep} />}
+                        disabled={isReshareActionPending}
+                        fullWidth
+                        onPress={openReshareFriendPicker}
+                      />
+                      <ActionButton
+                        label="링크 복사"
+                        variant="secondary"
+                        icon={<Link2 size={18} color={palette.primaryDeep} />}
+                        disabled={isReshareActionPending}
+                        fullWidth
+                        onPress={() => void handleCopyReshareLink()}
+                      />
+                    </View>
+                  </View>
+                )}
+              </Card>
+            ) : null}
+          </ScrollView>
+        </View>
+      </Modal>
 
       <Modal transparent visible={Boolean(resultCard)} animationType="fade" onRequestClose={() => setResultCard(null)}>
         <View style={styles.modalBackdrop}>
@@ -398,18 +689,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 20,
   },
-  feedback: {
-    backgroundColor: palette.limeSoft,
-    borderColor: palette.lineStrong,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    color: palette.ink,
-    fontSize: 13,
-    fontWeight: '900',
-    lineHeight: 19,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
   noticeCard: {
     backgroundColor: palette.amberSoft,
     gap: spacing.xs,
@@ -487,6 +766,171 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: spacing.lg,
+  },
+  modalScrollView: {
+    width: '100%',
+  },
+  modalScrollContent: {
+    alignItems: 'center',
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  reshareModal: {
+    gap: spacing.md,
+    maxWidth: 390,
+    width: '100%',
+  },
+  deleteModal: {
+    gap: spacing.md,
+    maxWidth: 390,
+    width: '100%',
+  },
+  deleteIcon: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: palette.coralSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    height: 46,
+    justifyContent: 'center',
+    width: 46,
+  },
+  deleteCopy: {
+    gap: spacing.xs,
+  },
+  deleteBody: {
+    color: palette.inkMuted,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  deleteActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  reshareHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+  },
+  reshareHeaderCopy: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  iconCloseButton: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    height: 48,
+    justifyContent: 'center',
+    width: 48,
+  },
+  previewActions: {
+    gap: spacing.sm,
+  },
+  secondaryActionRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  friendPicker: {
+    gap: spacing.sm,
+  },
+  friendPickerTitle: {
+    color: palette.ink,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  friendPickerList: {
+    gap: spacing.xs,
+  },
+  friendPickerNotice: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    color: palette.inkMuted,
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 19,
+    padding: spacing.md,
+  },
+  reshareFeedback: {
+    backgroundColor: palette.coralSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+    lineHeight: 19,
+    padding: spacing.md,
+  },
+  friendPickerRow: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 58,
+    padding: spacing.sm,
+  },
+  selectedFriendPickerRow: {
+    backgroundColor: palette.limeSoft,
+  },
+  friendAvatar: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  friendAvatarText: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  friendPickerCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  friendPickerName: {
+    color: palette.ink,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  friendPickerMeta: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  friendCheck: {
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  selectedFriendCheck: {
+    backgroundColor: palette.primary,
+  },
+  friendCheckText: {
+    color: palette.inkMuted,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  selectedFriendCheckText: {
+    color: palette.onLight,
   },
   resultModal: {
     gap: spacing.md,

@@ -54,17 +54,17 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="schedule"
-        options={{
-          title: '일정',
-          tabBarIcon: tabIcon(CalendarDays),
-        }}
-      />
-      <Tabs.Screen
         name="manage"
         options={{
           title: '관리함',
           tabBarIcon: tabIcon(Archive),
+        }}
+      />
+      <Tabs.Screen
+        name="schedule"
+        options={{
+          title: '일정',
+          tabBarIcon: tabIcon(CalendarDays),
         }}
       />
       <Tabs.Screen

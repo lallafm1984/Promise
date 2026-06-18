@@ -17,6 +17,18 @@ const pushChannelMigrationPath = join(
   'migrations',
   '20260616114000_expo_push_channel_priority.sql',
 );
+const ownedCardPolicyMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260618123000_relax_owned_card_creation_policy.sql',
+);
+const ownerCardSelectPolicyMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260618130000_allow_owner_card_select_for_insert_returning.sql',
+);
 
 describe('Supabase notification migrations', () => {
   it('revokes direct client execution from notification trigger functions', () => {
@@ -42,5 +54,28 @@ describe('Supabase notification migrations', () => {
 
     expect(sql).toContain(`'channelId', 'whenbollae-default'`);
     expect(sql).toContain(`'priority', 'high'`);
+  });
+
+  it('allows authenticated users to create their own cards and candidates', () => {
+    expect(existsSync(ownedCardPolicyMigrationPath)).toBe(true);
+
+    const sql = readFileSync(ownedCardPolicyMigrationPath, 'utf8');
+
+    expect(sql).toContain('drop policy if exists "Users can create own cards" on public.appointment_cards;');
+    expect(sql).toContain('with check (owner_id = auth.uid());');
+    expect(sql).toContain(
+      'drop policy if exists "Users can create candidates for own cards" on public.appointment_candidates;',
+    );
+    expect(sql).toContain('with check (public.is_appointment_card_owner(card_id));');
+  });
+
+  it('lets card owners read newly inserted cards without a self-lookup policy', () => {
+    expect(existsSync(ownerCardSelectPolicyMigrationPath)).toBe(true);
+
+    const sql = readFileSync(ownerCardSelectPolicyMigrationPath, 'utf8');
+
+    expect(sql).toContain('drop policy if exists "Users can read own or received cards" on public.appointment_cards;');
+    expect(sql).toContain('owner_id = auth.uid()');
+    expect(sql).toContain('or public.can_access_appointment_card(id)');
   });
 });

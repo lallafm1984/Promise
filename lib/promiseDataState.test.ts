@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { HostProfile, PromiseCard, ScheduleItem } from '@/types/promise';
-import { getPromiseDataLoadErrorState, type PromiseDataState } from './promiseDataState';
+import {
+  createPromiseDataRefreshChannelName,
+  getPromiseDataLoadErrorState,
+  type PromiseDataState,
+} from './promiseDataState';
 
 const profile: HostProfile = {
   id: 'profile-minseo',
@@ -40,6 +44,15 @@ const scheduleItem: ScheduleItem = {
 };
 
 describe('promise data state', () => {
+  it('creates a fresh realtime channel name for each mounted data subscriber', () => {
+    const firstChannelName = createPromiseDataRefreshChannelName();
+    const secondChannelName = createPromiseDataRefreshChannelName();
+
+    expect(firstChannelName).toMatch(/^promise-data-refresh-\d+$/);
+    expect(secondChannelName).toMatch(/^promise-data-refresh-\d+$/);
+    expect(secondChannelName).not.toBe(firstChannelName);
+  });
+
   it('clears previously loaded user data when a reload fails', () => {
     const current: PromiseDataState = {
       profile,

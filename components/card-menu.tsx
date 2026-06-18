@@ -34,6 +34,7 @@ interface DraftInputProps {
   icon: ReactNode;
   multiline?: boolean;
   onChangeText: (value: string) => void;
+  onFocus?: () => void;
 }
 
 interface CandidateTimeFieldsProps {
@@ -124,7 +125,7 @@ function ModeOption({
   );
 }
 
-export function DraftInput({ label, value, placeholder, icon, multiline, onChangeText }: DraftInputProps) {
+export function DraftInput({ label, value, placeholder, icon, multiline, onChangeText, onFocus }: DraftInputProps) {
   return (
     <View style={[styles.inputShell, multiline && styles.multilineShell]}>
       <View style={styles.inputLabelRow}>
@@ -136,6 +137,7 @@ export function DraftInput({ label, value, placeholder, icon, multiline, onChang
         value={value}
         multiline={multiline}
         onChangeText={onChangeText}
+        onFocus={onFocus}
         placeholder={placeholder}
         placeholderTextColor={palette.inkSoft}
         style={[styles.textInput, multiline && styles.multilineInput]}

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Check, Clock3, Search, Trash2, UserPlus, UsersRound, X } from 'lucide-react-native';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ActionButton, AppScreen, Card, SectionHeader, StorageModeNotice } from '@/components/ui';
+import { ActionButton, AppScreen, Card, SectionHeader } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
 import { normalizeFriendHandle, type AppFriend, type FriendRequest } from '@/lib/friends';
@@ -30,7 +30,6 @@ export default function FriendsScreen() {
     deleteFriend,
     cancelRequest,
     error: friendStoreError,
-    isPersisted,
     isLoading,
     isMutating,
   } = useFriends();
@@ -145,8 +144,6 @@ export default function FriendsScreen() {
           </View>
         </View>
 
-        <StorageModeNotice persisted={isPersisted} surface="friends" />
-
         <View style={styles.summaryRow}>
           <Metric label="친구" value={String(summary.friendCount)} tone="friend" />
           <Metric label="받은 요청" value={String(summary.incomingCount)} tone="incoming" />
@@ -186,7 +183,7 @@ export default function FriendsScreen() {
         {friendStoreError ? <Text style={styles.storeError}>{friendStoreError}</Text> : null}
 
         {activeTab === 'FRIENDS' ? (
-          <FriendsList friends={friends} onDeleteFriend={handleDeleteFriend} onOpenAddFriend={openAddFriendModal} />
+          <FriendsList friends={friends} onDeleteFriend={handleDeleteFriend} />
         ) : (
           <RequestsList
             incomingRequests={incomingRequests}
@@ -232,11 +229,9 @@ export default function FriendsScreen() {
 function FriendsList({
   friends,
   onDeleteFriend,
-  onOpenAddFriend,
 }: {
   friends: AppFriend[];
   onDeleteFriend: (friend: AppFriend) => void;
-  onOpenAddFriend: () => void;
 }) {
   return (
     <View style={styles.sectionStack}>
@@ -250,9 +245,7 @@ function FriendsList({
       ) : (
         <EmptyCard
           title="아직 친구가 없어요"
-          body="친구 추가를 누르면 아이디나 프로필 링크로 요청을 보낼 수 있어요."
-          actionLabel="친구 추가"
-          onAction={onOpenAddFriend}
+          body="위의 친구 추가 버튼으로 아이디나 프로필 링크 요청을 보낼 수 있어요."
         />
       )}
     </View>

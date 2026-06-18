@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode, type RefObject } from 'react';
+import { useFocusEffect } from 'expo-router';
 import {
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -23,6 +25,10 @@ type ButtonVariant = 'primary' | 'secondary' | 'kakao' | 'danger' | 'ghost';
 interface AppScreenProps {
   children: ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
+  keyboardAware?: boolean;
+  resetScrollOnFocus?: boolean;
+  scrollRef?: RefObject<ScrollView | null>;
+  scrollToTopKey?: string | number | boolean | null;
 }
 
 interface ButtonProps {
@@ -45,30 +51,77 @@ interface StorageModeNoticeProps {
   surface: StorageModeSurface;
 }
 
-export function AppScreen({ children, contentStyle }: AppScreenProps) {
+export function AppScreen({
+  children,
+  contentStyle,
+  keyboardAware,
+  resetScrollOnFocus = true,
+  scrollRef,
+  scrollToTopKey,
+}: AppScreenProps) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const internalScrollRef = useRef<ScrollView>(null);
+  const activeScrollRef = scrollRef ?? internalScrollRef;
   const contentWidth = Platform.OS === 'web' ? Math.min(width, 350) : Math.min(width, 430);
   const bottomInset = Platform.OS === 'web' ? 0 : Math.max(insets.bottom, MIN_NATIVE_BOTTOM_INSET);
   const bottomPadding = bottomInset + spacing.xl;
 
+  const scrollToTop = useCallback(
+    (animated = false) => {
+      requestAnimationFrame(() => {
+        activeScrollRef.current?.scrollTo({ y: 0, animated });
+      });
+    },
+    [activeScrollRef],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (resetScrollOnFocus) {
+        scrollToTop(false);
+      }
+    }, [resetScrollOnFocus, scrollToTop]),
+  );
+
+  useEffect(() => {
+    if (scrollToTopKey === undefined) {
+      return;
+    }
+
+    scrollToTop(false);
+  }, [scrollToTop, scrollToTopKey]);
+
+  const scrollView = (
+    <ScrollView
+      ref={activeScrollRef}
+      style={styles.scrollView}
+      automaticallyAdjustKeyboardInsets={Boolean(keyboardAware)}
+      keyboardShouldPersistTaps={keyboardAware ? 'handled' : undefined}
+      showsVerticalScrollIndicator={false}
+      scrollIndicatorInsets={{ bottom: bottomPadding }}
+      contentContainerStyle={[
+        styles.screenContent,
+        {
+          alignSelf: Platform.OS === 'web' ? 'flex-start' : 'center',
+          paddingBottom: bottomPadding,
+          width: contentWidth,
+        },
+        contentStyle,
+      ]}>
+      {children}
+    </ScrollView>
+  );
+
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-      <ScrollView
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        scrollIndicatorInsets={{ bottom: bottomPadding }}
-        contentContainerStyle={[
-          styles.screenContent,
-          {
-            alignSelf: Platform.OS === 'web' ? 'flex-start' : 'center',
-            paddingBottom: bottomPadding,
-            width: contentWidth,
-          },
-          contentStyle,
-        ]}>
-        {children}
-      </ScrollView>
+      {keyboardAware && Platform.OS !== 'web' ? (
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardAvoidingView}>
+          {scrollView}
+        </KeyboardAvoidingView>
+      ) : (
+        scrollView
+      )}
     </SafeAreaView>
   );
 }
@@ -209,6 +262,10 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   scrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  keyboardAvoidingView: {
     flex: 1,
     width: '100%',
   },

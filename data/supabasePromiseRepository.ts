@@ -543,6 +543,49 @@ export const supabasePromiseRepository: PromiseRepository = {
     return mapCard(cardWithSelection.data as AppointmentCardRow, profile, candidates, [], []);
   },
 
+  async sendManagedCardToRecipients(cardId, recipientProfileIds) {
+    const client = assertSupabase();
+    const user = await getAuthenticatedUser();
+    const profile = await ensureProfile(user);
+    const cleanCardId = cardId.trim();
+    const uniqueRecipientProfileIds = Array.from(new Set(recipientProfileIds)).filter(
+      (recipientProfileId) => recipientProfileId && recipientProfileId !== user.id,
+    );
+
+    if (!cleanCardId) {
+      throw new Error('카드를 찾지 못했어요.');
+    }
+
+    const { data: cardData, error: cardError } = await client
+      .from('appointment_cards')
+      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+      .eq('id', cleanCardId)
+      .eq('owner_id', user.id)
+      .single();
+
+    if (cardError) {
+      throw cardError;
+    }
+
+    if (uniqueRecipientProfileIds.length > 0) {
+      const { error: recipientsError } = await client.from('card_recipients').upsert(
+        uniqueRecipientProfileIds.map((recipientProfileId) => ({
+          card_id: cleanCardId,
+          recipient_profile_id: recipientProfileId,
+        })),
+        { ignoreDuplicates: true, onConflict: 'card_id,recipient_profile_id' },
+      );
+
+      if (recipientsError) {
+        throw recipientsError;
+      }
+    }
+
+    const cards = await mapCardsWithDetails([cardData as AppointmentCardRow], await getProfilesById([profile.id], profile));
+
+    return cards[0] ?? mapCard(cardData as AppointmentCardRow, profile, [], [], []);
+  },
+
   async deleteManagedCard(cardId) {
     const client = assertSupabase();
     await getAuthenticatedUser();

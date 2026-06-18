@@ -1,7 +1,11 @@
 ﻿import { useEffect, useState } from 'react';
 
 import { getActivePromiseRepository } from '@/data/promiseRepository';
-import { getPromiseDataLoadErrorState, type PromiseDataState } from '@/lib/promiseDataState';
+import {
+  createPromiseDataRefreshChannelName,
+  getPromiseDataLoadErrorState,
+  type PromiseDataState,
+} from '@/lib/promiseDataState';
 import { supabase } from '@/lib/supabase';
 const initialState: PromiseDataState = {
   profile: null,
@@ -17,6 +21,7 @@ export function usePromiseData() {
 
   useEffect(() => {
     let isMounted = true;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function load() {
       try {
@@ -44,6 +49,16 @@ export function usePromiseData() {
       }
     }
 
+    function scheduleLoad() {
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+      }
+
+      reloadTimer = setTimeout(() => {
+        void load();
+      }, 250);
+    }
+
     load();
     const {
       data: { subscription },
@@ -51,10 +66,21 @@ export function usePromiseData() {
       supabase?.auth.onAuthStateChange(() => {
         void load();
       }) ?? { data: { subscription: null } };
+    const dataChangeChannel = supabase
+      ?.channel(createPromiseDataRefreshChannelName())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointment_cards' }, scheduleLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointment_respondents' }, scheduleLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointment_candidate_responses' }, scheduleLoad)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, scheduleLoad)
+      .subscribe();
 
     return () => {
       isMounted = false;
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+      }
       subscription?.unsubscribe();
+      void dataChangeChannel?.unsubscribe();
     };
   }, []);
 

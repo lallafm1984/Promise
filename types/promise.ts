@@ -136,6 +136,7 @@ export interface PromiseRepository {
   listScheduleItems(): Promise<ScheduleItem[]>;
   listReceivedCardAlerts(): Promise<ReceivedCardAlert[]>;
   createManagedCard(card: PromiseCard): Promise<PromiseCard>;
+  sendManagedCardToRecipients(cardId: string, recipientProfileIds: string[]): Promise<PromiseCard>;
   deleteManagedCard(cardId: string): Promise<void>;
   confirmManagedCard(input: ConfirmCardInput): Promise<PromiseCard>;
   respondToReceivedCard(input: RespondToReceivedCardInput): Promise<PromiseCard>;

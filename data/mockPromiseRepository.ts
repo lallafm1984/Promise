@@ -1,4 +1,5 @@
 import { applyReceivedCardResponse, buildConfirmedCard, buildScheduleItemFromConfirmedCard } from '@/lib/cardMenu';
+import { mergeRecipientProfileIds } from '@/lib/managedCards';
 import type {
   ConfirmCardInput,
   HostProfile,
@@ -208,6 +209,18 @@ export const mockPromiseRepository: PromiseRepository = {
   async createManagedCard(card) {
     cards = [card, ...cards.filter((currentCard) => currentCard.id !== card.id)];
     return card;
+  },
+  async sendManagedCardToRecipients(cardId, recipientProfileIds) {
+    const currentCard = cards.find((card) => card.id === cardId);
+
+    if (!currentCard) {
+      throw new Error('카드를 찾지 못했어요.');
+    }
+
+    const updatedCard = mergeRecipientProfileIds(currentCard, recipientProfileIds);
+    cards = cards.map((card) => (card.id === cardId ? updatedCard : card));
+
+    return updatedCard;
   },
   async deleteManagedCard(cardId) {
     cards = cards.filter((card) => card.id !== cardId);

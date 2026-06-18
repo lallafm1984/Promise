@@ -8,6 +8,8 @@ import {
   applyReceivedCardResponse,
   canDeleteManagedCard,
   compactDraftTimes,
+  createDefaultCardDraft,
+  createDefaultDraftTimes,
   ensureDraftTimeCount,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
@@ -56,6 +58,26 @@ const baseCard: PromiseCard = {
 };
 
 describe('card menu helpers', () => {
+  it('creates a fresh default card draft after a delivered card flow finishes', () => {
+    const baseDate = new Date('2026-06-17T09:00:00+09:00');
+
+    expect(createDefaultCardDraft(baseDate)).toEqual({
+      mode: 'DIRECT',
+      times: createDefaultDraftTimes(2, baseDate),
+      location: '',
+      message: '',
+    });
+  });
+
+  it('creates different default candidate times for poll options', () => {
+    const baseDate = new Date('2026-06-17T09:00:00+09:00');
+    const defaultTimes = createDefaultDraftTimes(3, baseDate);
+    const defaultHours = defaultTimes.map((time) => new Date(time).getHours());
+
+    expect(new Set(defaultTimes).size).toBe(3);
+    expect(defaultHours).toEqual([19, 20, 21]);
+  });
+
   it('labels the two creation modes with approved product names', () => {
     expect(getModeLabel('DIRECT')).toBe('이때볼래?');
     expect(getModeLabel('POLL')).toBe('언제볼래?');
@@ -81,6 +103,18 @@ describe('card menu helpers', () => {
     expect(validateCardDraft({ mode: 'POLL', times: [june14At1930], location: '성수 카페', message: '' })).toEqual({
       valid: false,
       error: '언제볼래?는 후보 시간이 2개 이상 필요해요.',
+    });
+
+    expect(
+      validateCardDraft({
+        mode: 'POLL',
+        times: [june14At1930, june14At1930],
+        location: '성수 카페',
+        message: '',
+      }),
+    ).toEqual({
+      valid: false,
+      error: '후보 시간을 서로 다르게 입력해 주세요.',
     });
 
     expect(
@@ -223,7 +257,7 @@ describe('card menu helpers', () => {
     });
   });
 
-  it('allows deleting only owner past cards', () => {
+  it('allows deleting managed cards in every manage status group', () => {
     const pastOwnerCard: PromiseCard = {
       ...baseCard,
       status: 'CONFIRMED',
@@ -235,8 +269,10 @@ describe('card menu helpers', () => {
     };
 
     expect(canDeleteManagedCard(pastOwnerCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
-    expect(canDeleteManagedCard(pastReceivedCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
-    expect(canDeleteManagedCard({ ...baseCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
+    expect(canDeleteManagedCard({ ...baseCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
+    expect(canDeleteManagedCard({ ...baseCard, status: 'VOTING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
+    expect(canDeleteManagedCard({ ...baseCard, status: 'CONFIRMED' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
+    expect(canDeleteManagedCard(pastReceivedCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
   });
 
   it('merges owned and received managed cards without duplicating owned cards', () => {

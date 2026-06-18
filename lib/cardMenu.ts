@@ -306,9 +306,8 @@ export function getManagedCardAction(card: PromiseCard, now = new Date()): Manag
 
 export function buildShareMessage(card: PromiseCard): string {
   const lines = [
-    card.title,
-    `언제: ${card.candidates.map((candidate) => candidate.label).join(' / ')}`,
-    `어디서: ${card.location}`,
+    '언제볼래? 약속 초대가 왔어요.',
+    `${card.candidates.map((candidate) => candidate.label).join(' / ')} · ${card.location}`,
   ];
   const message = card.message.trim();
 
@@ -316,6 +315,8 @@ export function buildShareMessage(card: PromiseCard): string {
     lines.push(`한마디: ${message}`);
   }
 
+  lines.push('');
+  lines.push('아래 링크에서 가능 여부를 알려줘.');
   lines.push(card.sharedUrl);
 
   return lines.join('\n');

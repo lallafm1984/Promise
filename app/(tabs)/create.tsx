@@ -222,7 +222,6 @@ export default function CreateCardScreen() {
       const shareable = await getShareablePreviewCard(previewCard, publishPreview);
       const result = await Share.share({
         message: buildShareMessage(shareable.card),
-        title: shareable.card.title,
         url: shareable.card.sharedUrl,
       });
       if (result.action === Share.dismissedAction) {

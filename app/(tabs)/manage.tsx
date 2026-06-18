@@ -192,7 +192,6 @@ export default function ManageCardsScreen() {
     try {
       const result = await Share.share({
         message: buildShareMessage(reshareCard),
-        title: reshareCard.title,
         url: reshareCard.sharedUrl,
       });
       if (result.action !== Share.dismissedAction) {

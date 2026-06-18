@@ -359,13 +359,14 @@ describe('card menu helpers', () => {
     });
   });
 
-  it('builds a share message with title, time, place, optional message, and link', () => {
+  it('builds a concise share message that points invitees to the response link', () => {
     expect(buildShareMessage(baseCard)).toBe(
       [
-        '6월 14일 19:30에 성수 카페에서 볼래?',
-        '언제: 6월 14일 19:30',
-        '어디서: 성수 카페',
+        '언제볼래? 약속 초대가 왔어요.',
+        '6월 14일 19:30 · 성수 카페',
         '한마디: 가볍게 한 시간만 보자',
+        '',
+        '아래 링크에서 가능 여부를 알려줘.',
         'https://whenbollae.app/c/card-test',
       ].join('\n'),
     );
@@ -389,19 +390,21 @@ describe('card menu helpers', () => {
       }),
     ).toBe(
       [
-        '성수 카페에서 언제볼래?',
-        '언제: 6월 14일 19:30 / 6월 15일 20:00',
-        '어디서: 성수 카페',
+        '언제볼래? 약속 초대가 왔어요.',
+        '6월 14일 19:30 / 6월 15일 20:00 · 성수 카페',
         '한마디: 가볍게 한 시간만 보자',
+        '',
+        '아래 링크에서 가능 여부를 알려줘.',
         'https://whenbollae.app/c/card-test',
       ].join('\n'),
     );
 
     expect(buildShareMessage({ ...baseCard, message: '' })).toBe(
       [
-        '6월 14일 19:30에 성수 카페에서 볼래?',
-        '언제: 6월 14일 19:30',
-        '어디서: 성수 카페',
+        '언제볼래? 약속 초대가 왔어요.',
+        '6월 14일 19:30 · 성수 카페',
+        '',
+        '아래 링크에서 가능 여부를 알려줘.',
         'https://whenbollae.app/c/card-test',
       ].join('\n'),
     );

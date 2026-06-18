@@ -22,8 +22,37 @@ import {
   isShareablePublicCard,
 } from '@/lib/previewActions';
 import { getPreviewFriendOptions, getPreviewRecipientProfileIds, selectOnePreviewFriend } from '@/lib/previewFriends';
-import type { PromiseCard } from '@/types/promise';
-import type { ReceivedCardResponseChoice } from '@/types/promise';
+import type { Participant, PromiseCard, ReceivedCardResponseChoice, ResponseChoice } from '@/types/promise';
+
+type SelectableResponseChoice = Exclude<ReceivedCardResponseChoice, 'MAYBE'>;
+
+const participantChoiceLabels: Record<ResponseChoice, string> = {
+  YES: '가능',
+  MAYBE: '애매',
+  NO: '어려움',
+  UNANSWERED: '미응답',
+};
+
+function getParticipantDisplayName(participant: Participant) {
+  return participant.displayName?.trim() || participant.name;
+}
+
+function getParticipantComment(participant: Participant) {
+  return participant.comment?.trim();
+}
+
+function getParticipantChoiceBadgeStyle(choice: ResponseChoice) {
+  switch (choice) {
+    case 'YES':
+      return styles.respondentChoiceYes;
+    case 'MAYBE':
+      return styles.respondentChoiceMaybe;
+    case 'NO':
+      return styles.respondentChoiceNo;
+    case 'UNANSWERED':
+      return styles.respondentChoiceUnanswered;
+  }
+}
 
 const statusTabs: Array<{ key: ManagedStatusGroup; label: string }> = [
   { key: 'PENDING', label: '응답 대기' },
@@ -55,7 +84,7 @@ export default function ManageCardsScreen() {
   const [isReshareActionPending, setIsReshareActionPending] = useState(false);
   const [reshareFeedback, setReshareFeedback] = useState<string | null>(null);
   const [isDeletingCard, setIsDeletingCard] = useState(false);
-  const [responseChoices, setResponseChoices] = useState<Record<string, ReceivedCardResponseChoice>>({});
+  const [responseChoices, setResponseChoices] = useState<Record<string, SelectableResponseChoice>>({});
   const [isConfirming, setIsConfirming] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const now = useMemo(() => new Date(), [managedCards]);
@@ -259,7 +288,7 @@ export default function ManageCardsScreen() {
         candidateId: candidate.id,
         choice: responseChoices[candidate.id],
       }))
-      .filter((response): response is { candidateId: string; choice: ReceivedCardResponseChoice } => Boolean(response.choice));
+      .filter((response): response is { candidateId: string; choice: SelectableResponseChoice } => Boolean(response.choice));
 
     if (responses.length !== responseCard.candidates.length) {
       return;
@@ -277,7 +306,7 @@ export default function ManageCardsScreen() {
     }
   }
 
-  function setCandidateChoice(candidateId: string, choice: ReceivedCardResponseChoice) {
+  function setCandidateChoice(candidateId: string, choice: SelectableResponseChoice) {
     setResponseChoices((currentChoices) => ({
       ...currentChoices,
       [candidateId]: choice,
@@ -530,6 +559,50 @@ export default function ManageCardsScreen() {
                   </View>
                 ))}
               </View>
+
+              <View style={styles.respondentPanel}>
+                <View style={styles.respondentPanelHeader}>
+                  <Text style={styles.respondentPanelTitle}>응답자 한마디</Text>
+                  <Text style={styles.respondentPanelCount}>{resultCard.participants.length}명</Text>
+                </View>
+                {resultCard.participants.length > 0 ? (
+                  <ScrollView
+                    contentContainerStyle={styles.respondentRows}
+                    showsVerticalScrollIndicator={false}
+                    style={styles.respondentRowsScroll}>
+                    {resultCard.participants.map((participant) => {
+                      const displayName = getParticipantDisplayName(participant);
+                      const comment = getParticipantComment(participant);
+                      const choice = participant.choice ?? 'UNANSWERED';
+
+                      return (
+                        <View key={participant.id} style={styles.respondentRow}>
+                          <View style={[styles.respondentAvatar, { backgroundColor: participant.color }]}>
+                            <Text style={styles.respondentAvatarText}>{participant.name}</Text>
+                          </View>
+                          <View style={styles.respondentCopy}>
+                            <View style={styles.respondentNameRow}>
+                              <Text style={styles.respondentName} numberOfLines={1}>
+                                {displayName}
+                              </Text>
+                              <View style={[styles.respondentChoiceBadge, getParticipantChoiceBadgeStyle(choice)]}>
+                                <Text style={styles.respondentChoiceText}>{participantChoiceLabels[choice]}</Text>
+                              </View>
+                            </View>
+                            <Text
+                              style={comment ? styles.respondentComment : styles.respondentCommentMuted}
+                              numberOfLines={3}>
+                              {comment || '한마디 없음'}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                ) : (
+                  <Text style={styles.emptyRespondentText}>아직 응답이 없어요.</Text>
+                )}
+              </View>
             </Card>
           ) : null}
         </View>
@@ -570,11 +643,6 @@ export default function ManageCardsScreen() {
                           label="가능"
                           selected={responseChoices[candidate.id] === 'YES'}
                           onPress={() => setCandidateChoice(candidate.id, 'YES')}
-                        />
-                        <ResponseChoiceButton
-                          label="애매"
-                          selected={responseChoices[candidate.id] === 'MAYBE'}
-                          onPress={() => setCandidateChoice(candidate.id, 'MAYBE')}
                         />
                         <ResponseChoiceButton
                           label="어려움"
@@ -981,6 +1049,124 @@ const styles = StyleSheet.create({
   },
   resultList: {
     gap: spacing.sm,
+  },
+  respondentPanel: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
+  respondentPanelHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  respondentPanelTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  respondentPanelCount: {
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    color: palette.primaryDeep,
+    fontSize: 12,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  respondentRowsScroll: {
+    maxHeight: 220,
+  },
+  respondentRows: {
+    gap: spacing.xs,
+    paddingBottom: 2,
+  },
+  respondentRow: {
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
+  respondentAvatar: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  respondentAvatarText: {
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  respondentCopy: {
+    flex: 1,
+    gap: 5,
+    minWidth: 0,
+  },
+  respondentNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  respondentName: {
+    color: palette.ink,
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  respondentChoiceBadge: {
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 4,
+  },
+  respondentChoiceYes: {
+    backgroundColor: palette.mint,
+  },
+  respondentChoiceMaybe: {
+    backgroundColor: palette.amber,
+  },
+  respondentChoiceNo: {
+    backgroundColor: palette.coral,
+  },
+  respondentChoiceUnanswered: {
+    backgroundColor: palette.paper,
+  },
+  respondentChoiceText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  respondentComment: {
+    color: palette.inkMuted,
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 18,
+  },
+  respondentCommentMuted: {
+    color: palette.inkSoft,
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 18,
+  },
+  emptyRespondentText: {
+    color: palette.inkMuted,
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 18,
   },
   resultCandidate: {
     backgroundColor: palette.limeSoft,

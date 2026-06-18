@@ -320,7 +320,16 @@ describe('card menu helpers', () => {
     const responseCard: PromiseCard = {
       ...baseCard,
       requesterName: '하린',
-      participants: [{ id: 'profile-minseo', name: '민', color: '#FFD6E7', choice: 'UNANSWERED' }],
+      participants: [
+        {
+          id: 'profile-minseo',
+          name: '민',
+          displayName: '민서',
+          comment: '조금 늦을 수 있어요',
+          color: '#FFD6E7',
+          choice: 'UNANSWERED',
+        },
+      ],
     };
 
     expect(
@@ -331,7 +340,16 @@ describe('card menu helpers', () => {
       }),
     ).toEqual({
       ...responseCard,
-      participants: [{ id: 'profile-minseo', name: '민', color: '#FFD6E7', choice: 'YES' }],
+      participants: [
+        {
+          id: 'profile-minseo',
+          name: '민',
+          displayName: '민서',
+          comment: '조금 늦을 수 있어요',
+          color: '#FFD6E7',
+          choice: 'YES',
+        },
+      ],
       candidates: [
         {
           ...responseCard.candidates[0],

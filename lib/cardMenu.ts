@@ -29,6 +29,7 @@ export interface ManagedCardAction {
 export interface ApplyReceivedCardResponseInput {
   respondentId: string;
   respondentName: string;
+  respondentComment?: string;
   responses: Array<{
     candidateId: string;
     choice: ReceivedCardResponseChoice;
@@ -430,9 +431,18 @@ export function applyReceivedCardResponse(card: PromiseCard, input: ApplyReceive
   const previousParticipant = card.participants.find((participant) => participant.id === input.respondentId);
   const responseByCandidateId = new Map(input.responses.map((response) => [response.candidateId, response]));
   const representativeChoice = getRepresentativeChoice(input.responses);
+  const displayName =
+    input.respondentName.trim() ||
+    previousParticipant?.displayName ||
+    previousParticipant?.name ||
+    getParticipantLabel(input.respondentName);
+  const comment =
+    input.respondentComment === undefined ? previousParticipant?.comment ?? '' : input.respondentComment.trim();
   const participant: Participant = {
     id: input.respondentId,
     name: previousParticipant?.name ?? getParticipantLabel(input.respondentName),
+    displayName,
+    comment,
     color: previousParticipant?.color ?? '#FFD6E7',
     choice: representativeChoice,
   };

@@ -11,6 +11,8 @@ export type ReminderLead = '10_MIN' | '30_MIN' | '1_HOUR';
 export interface Participant {
   id: string;
   name: string;
+  displayName?: string;
+  comment?: string;
   color: string;
   choice?: ResponseChoice;
 }

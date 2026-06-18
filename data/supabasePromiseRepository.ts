@@ -57,6 +57,7 @@ interface AppointmentRespondentRow {
   card_id: string;
   profile_id: string | null;
   display_name: string;
+  comment: string;
 }
 
 interface CandidateResponseRow {
@@ -165,10 +166,14 @@ function mapCard(
   const cardRespondents = respondents.filter((respondent) => respondent.card_id === card.id);
   const participants: Participant[] = cardRespondents.map((respondent, index) => {
     const respondentResponses = responses.filter((response) => response.respondent_id === respondent.id);
+    const displayName = respondent.display_name.trim() || '친구';
+    const comment = respondent.comment.trim();
 
     return {
       id: respondent.profile_id ?? respondent.id,
-      name: respondent.display_name.slice(0, 1),
+      name: displayName.slice(0, 1),
+      displayName,
+      comment,
       color: getParticipantColor(index),
       choice: chooseParticipantChoice(respondentResponses),
     };
@@ -243,7 +248,7 @@ async function mapCardsWithDetails(cards: AppointmentCardRow[], profilesById: Ma
         .in('card_id', cardIds),
       client
         .from('appointment_respondents')
-        .select('id, card_id, profile_id, display_name')
+        .select('id, card_id, profile_id, display_name, comment')
         .in('card_id', cardIds),
     ]);
 

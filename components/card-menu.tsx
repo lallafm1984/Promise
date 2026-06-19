@@ -348,11 +348,12 @@ export function ManagedCardsSection({
   return (
     <View style={styles.managementStack}>
       <Text style={styles.statusGroupTitle}>{tabLabel}</Text>
-      {cards.map((card) => (
+      {cards.map((card, index) => (
         <ManagedCardRow
           key={card.id}
           card={card}
           now={now}
+          toneIndex={index}
           currentProfile={currentProfile ?? undefined}
           onAction={onAction}
           onDelete={onDelete}
@@ -365,12 +366,14 @@ export function ManagedCardsSection({
 function ManagedCardRow({
   card,
   now,
+  toneIndex,
   currentProfile,
   onAction,
   onDelete,
 }: {
   card: PromiseCard;
   now: Date;
+  toneIndex: number;
   currentProfile?: ManagedCardCurrentProfile;
   onAction: ManagedCardsSectionProps['onAction'];
   onDelete?: ManagedCardsSectionProps['onDelete'];
@@ -381,7 +384,7 @@ function ManagedCardRow({
   const rowMetaLabel = getManagedCardRowMetaLabel(card, currentProfile);
 
   return (
-    <Card style={styles.managedCard}>
+    <Card style={[styles.managedCard, managedCardToneStyles[toneIndex % managedCardToneStyles.length]]}>
       <View style={styles.managedTop}>
         <Chip label={getModeLabel(card.mode)} tone={card.mode === 'DIRECT' ? 'amber' : 'aqua'} />
         <View style={styles.managedTopActions}>
@@ -690,7 +693,20 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   managedCard: {
+    borderColor: palette.lineStrong,
     gap: spacing.sm,
+  },
+  managedCardLime: {
+    backgroundColor: palette.limeSoft,
+  },
+  managedCardSky: {
+    backgroundColor: palette.skySoft,
+  },
+  managedCardAmber: {
+    backgroundColor: palette.amberSoft,
+  },
+  managedCardMint: {
+    backgroundColor: palette.mintSoft,
   },
   managedTop: {
     alignItems: 'center',
@@ -750,3 +766,10 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 });
+
+const managedCardToneStyles = [
+  styles.managedCardLime,
+  styles.managedCardSky,
+  styles.managedCardAmber,
+  styles.managedCardMint,
+];

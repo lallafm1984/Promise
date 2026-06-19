@@ -15,7 +15,6 @@ import {
   formatCandidateResponseSummary,
   getManagedCardInboxTab,
   getManagedCardScope,
-  getManagedCardTabLabel,
   getManagedStatusGroup,
   getShareUrlForClipboard,
   type ManagedCardActionKind,
@@ -124,6 +123,25 @@ const legacyGroupTabs: Record<ManagedStatusGroup, ManagedCardInboxTab> = {
 
 function getScopeForTab(tab: ManagedCardInboxTab): ManagedCardScope {
   return tab.startsWith('RECEIVED') ? 'RECEIVED' : 'SENT';
+}
+
+function getCompactManagedCardTabLabel(tab: ManagedCardInboxTab): string {
+  switch (tab) {
+    case 'SENT_NO_RESPONSE':
+      return '응답없음';
+    case 'SENT_HAS_RESPONSE':
+      return '응답도착';
+    case 'SENT_CONFIRMED':
+    case 'RECEIVED_CONFIRMED':
+      return '확정';
+    case 'SENT_PAST':
+    case 'RECEIVED_PAST':
+      return '지난';
+    case 'RECEIVED_NEEDS_REPLY':
+      return '답장필요';
+    case 'RECEIVED_REPLIED':
+      return '답장완료';
+  }
 }
 
 export default function ManageCardsScreen() {
@@ -470,10 +488,13 @@ export default function ManageCardsScreen() {
               accessibilityState={{ selected }}
               onPress={() => selectScope(tab.key)}
               style={({ pressed }) => [styles.scopeTab, selected && styles.selectedScopeTab, pressed && styles.pressed]}>
-              <Text style={[styles.scopeTabLabel, selected && styles.selectedScopeTabLabel]}>{tab.label}</Text>
-              <Text style={[styles.scopeTabCount, selected && styles.selectedScopeTabCount]}>
-                {isLoading ? '-' : scopeCounts[tab.key]}
-              </Text>
+              <View style={[styles.scopeTabAccent, selected && styles.selectedScopeTabAccent]} />
+              <View style={styles.scopeTabContent}>
+                <Text style={[styles.scopeTabLabel, selected && styles.selectedScopeTabLabel]}>{tab.label}</Text>
+                <Text style={[styles.scopeTabCount, selected && styles.selectedScopeTabCount]}>
+                  {isLoading ? '-' : `${scopeCounts[tab.key]}개`}
+                </Text>
+              </View>
             </Pressable>
           );
         })}
@@ -490,8 +511,8 @@ export default function ManageCardsScreen() {
               accessibilityState={{ selected }}
               onPress={() => selectTab(tab)}
               style={({ pressed }) => [styles.statusTab, selected && styles.selectedStatusTab, pressed && styles.pressed]}>
-              <Text style={[styles.statusTabLabel, selected && styles.selectedStatusTabLabel]}>
-                {getManagedCardTabLabel(tab)}
+              <Text style={[styles.statusTabLabel, selected && styles.selectedStatusTabLabel]} numberOfLines={1}>
+                {getCompactManagedCardTabLabel(tab)}
               </Text>
               <Text style={[styles.statusTabCount, selected && styles.selectedStatusTabCount]}>
                 {isLoading ? '-' : (tabCounts[tab] ?? 0)}
@@ -926,75 +947,82 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   scopeTabs: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.lg,
+    borderWidth: 2,
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: spacing.xs,
+    padding: spacing.xs,
   },
   scopeTab: {
     alignItems: 'center',
     backgroundColor: palette.surface,
     borderColor: palette.lineStrong,
-    borderRadius: radius.md,
-    borderWidth: 2,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
     flex: 1,
     flexDirection: 'row',
-    gap: spacing.xs,
-    justifyContent: 'center',
-    minHeight: 50,
+    gap: spacing.sm,
+    justifyContent: 'flex-start',
+    minHeight: 58,
     minWidth: 0,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
   },
   selectedScopeTab: {
+    backgroundColor: palette.primaryDeep,
+  },
+  scopeTabAccent: {
+    backgroundColor: palette.line,
+    borderRadius: radius.pill,
+    height: 30,
+    width: 5,
+  },
+  selectedScopeTabAccent: {
     backgroundColor: palette.lime,
+  },
+  scopeTabContent: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
   },
   scopeTabLabel: {
     color: palette.ink,
     flexShrink: 1,
     fontSize: 15,
     fontWeight: '900',
-    textAlign: 'center',
+    textAlign: 'left',
   },
   selectedScopeTabLabel: {
-    color: palette.ink,
+    color: palette.surface,
   },
   scopeTabCount: {
-    backgroundColor: palette.paper,
-    borderColor: palette.lineStrong,
-    borderRadius: radius.pill,
-    borderWidth: 1.5,
-    color: palette.ink,
+    color: palette.inkMuted,
     fontSize: 12,
     fontWeight: '900',
-    minWidth: 28,
-    overflow: 'hidden',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    textAlign: 'center',
   },
   selectedScopeTabCount: {
-    backgroundColor: palette.surface,
-    color: palette.primaryDeep,
+    color: palette.surface,
   },
   statusTabs: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
+    gap: 4,
   },
   statusTab: {
     alignItems: 'center',
     backgroundColor: palette.surface,
     borderColor: palette.lineStrong,
-    borderRadius: radius.md,
+    borderRadius: radius.sm,
     borderWidth: 2,
     flexDirection: 'row',
-    flexGrow: 1,
-    flexShrink: 1,
-    gap: spacing.xs,
+    flex: 1,
+    gap: 3,
     justifyContent: 'center',
-    minHeight: 44,
-    minWidth: 126,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    minHeight: 36,
+    minWidth: 0,
+    paddingHorizontal: 4,
+    paddingVertical: 5,
   },
   selectedStatusTab: {
     backgroundColor: palette.primary,
@@ -1006,7 +1034,7 @@ const styles = StyleSheet.create({
   statusTabLabel: {
     color: palette.ink,
     flexShrink: 1,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '900',
     textAlign: 'center',
   },
@@ -1019,12 +1047,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: 1.5,
     color: palette.ink,
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '900',
-    minWidth: 28,
+    minWidth: 20,
     overflow: 'hidden',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
     textAlign: 'center',
   },
   selectedStatusTabCount: {

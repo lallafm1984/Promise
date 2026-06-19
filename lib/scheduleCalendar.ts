@@ -17,6 +17,24 @@ export function toDateKey(date: Date) {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+export function parseDateKey(value: string | undefined): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+
+  const [yearText, monthText, dayText] = value.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(year, month - 1, day);
+
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+
+  return date;
+}
+
 export function getScheduleDate(item: ScheduleItem, fallbackYear: number) {
   const match = item.dateLabel.match(/(\d+)\s*월\s*(\d+)\s*일/);
 

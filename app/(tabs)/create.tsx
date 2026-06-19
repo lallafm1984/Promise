@@ -19,6 +19,7 @@ import {
   compactDraftTimes,
   createDefaultCardDraft,
   createDefaultDraftTime,
+  DUPLICATE_DRAFT_TIME_ERROR,
   ensureDraftTimeCount,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
@@ -26,6 +27,7 @@ import {
   getGeneratedCardTitle,
   getModeLabel,
   getShareUrlForClipboard,
+  PAST_DRAFT_TIME_ERROR,
   removeDraftTimeAtIndex,
   validateCardDraft,
   type CardDraft,
@@ -42,7 +44,6 @@ const INITIAL_DRAFT: CardDraft = {
   ...createDefaultCardDraft(),
 };
 const MODAL_BACKDROP_COLOR = 'rgba(75, 52, 40, 0.42)';
-const DUPLICATE_TIME_ERROR = '후보 시간을 서로 다르게 입력해 주세요.';
 const CARD_BASE_URL = (process.env.EXPO_PUBLIC_CARD_BASE_URL ?? 'https://whenbollae.app').replace(/\/+$/, '');
 
 export default function CreateCardScreen() {
@@ -144,7 +145,7 @@ export default function CreateCardScreen() {
     const validation = validateCardDraft(activeDraft);
 
     if (!validation.valid) {
-      if (validation.error === DUPLICATE_TIME_ERROR) {
+      if (validation.error === DUPLICATE_DRAFT_TIME_ERROR || validation.error === PAST_DRAFT_TIME_ERROR) {
         setValidationNotice(validation.error);
         setFeedback(null);
       } else {

@@ -1,4 +1,5 @@
-import { getManagedStatusGroup, type ManagedStatusGroup } from './cardMenu';
+import { getManagedStatusGroup, getPrimarySlot, type ManagedStatusGroup } from './cardMenu';
+import { toDateKey } from './scheduleCalendar';
 import type { AppointmentStatus, PromiseCard, ScheduleItem } from '@/types/promise';
 
 export interface ManagedCardDeleteConfirmation {
@@ -14,6 +15,7 @@ export const CARD_CORE_CHANGE_POLICY = {
 } as const;
 
 export type DeliveredCardManagePath = `/manage?group=${ManagedStatusGroup}&scroll=${string}`;
+export type ConfirmedCardSchedulePath = '/schedule' | `/schedule?date=${string}`;
 
 const RECENT_RECEIVED_CARD_STATUSES: AppointmentStatus[] = ['PENDING', 'VOTING', 'DECLINED', 'CONFIRMED'];
 
@@ -99,6 +101,22 @@ export function getScheduleCardManagePath(
 ): DeliveredCardManagePath {
   const group = getScheduleCardManageGroup(item, now);
   return `/manage?group=${group}&scroll=${encodeURIComponent(scrollKey)}` as DeliveredCardManagePath;
+}
+
+export function getConfirmedCardSchedulePath(card: PromiseCard): ConfirmedCardSchedulePath {
+  const selectedSlot = getPrimarySlot(card);
+
+  if (!selectedSlot?.startsAt) {
+    return '/schedule';
+  }
+
+  const startsAt = new Date(selectedSlot.startsAt);
+
+  if (Number.isNaN(startsAt.getTime())) {
+    return '/schedule';
+  }
+
+  return `/schedule?date=${toDateKey(startsAt)}`;
 }
 
 export function getManagedCardDeleteConfirmation(card: PromiseCard): ManagedCardDeleteConfirmation {

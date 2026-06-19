@@ -10,6 +10,7 @@ import {
   compactDraftTimes,
   createDefaultCardDraft,
   createDefaultDraftTimes,
+  PAST_DRAFT_TIME_ERROR,
   ensureDraftTimeCount,
   formatCandidateResponseSummary,
   formatDraftDateTimeLabel,
@@ -92,7 +93,9 @@ describe('card menu helpers', () => {
   });
 
   it('validates direct cards with one time and one place', () => {
-    expect(validateCardDraft({ mode: 'DIRECT', times: [june14At1930], location: '성수 카페', message: '' })).toEqual({
+    const now = new Date('2026-06-13T10:00:00+09:00');
+
+    expect(validateCardDraft({ mode: 'DIRECT', times: [june14At1930], location: '성수 카페', message: '' }, now)).toEqual({
       valid: true,
     });
 
@@ -108,6 +111,8 @@ describe('card menu helpers', () => {
   });
 
   it('requires two candidate times for poll cards', () => {
+    const now = new Date('2026-06-13T10:00:00+09:00');
+
     expect(validateCardDraft({ mode: 'POLL', times: [june14At1930], location: '성수 카페', message: '' })).toEqual({
       valid: false,
       error: '언제볼래?는 후보 시간이 2개 이상 필요해요.',
@@ -131,8 +136,31 @@ describe('card menu helpers', () => {
         times: [june14At1930, june15At2000],
         location: '성수 카페',
         message: '',
-      }),
+      }, now),
     ).toEqual({ valid: true });
+  });
+
+  it('rejects candidate times that are not after the current time', () => {
+    const now = new Date('2026-06-14T19:31:00+09:00');
+
+    expect(validateCardDraft({ mode: 'DIRECT', times: [june14At1930], location: '성수 카페', message: '' }, now)).toEqual({
+      valid: false,
+      error: PAST_DRAFT_TIME_ERROR,
+    });
+    expect(
+      validateCardDraft(
+        {
+          mode: 'POLL',
+          times: [june14At1930, june15At2000],
+          location: '성수 카페',
+          message: '',
+        },
+        now,
+      ),
+    ).toEqual({
+      valid: false,
+      error: PAST_DRAFT_TIME_ERROR,
+    });
   });
 
   it('keeps poll deletion on candidate 2+ and switches to direct when one time remains', () => {
@@ -427,6 +455,7 @@ describe('card menu helpers', () => {
           comment: '조금 늦을 수 있어요',
           color: '#FFD6E7',
           choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
         },
       ],
     };
@@ -449,6 +478,7 @@ describe('card menu helpers', () => {
           comment: '조금 늦을 수 있어요',
           color: '#FFD6E7',
           choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
         },
       ],
     });
@@ -489,6 +519,7 @@ describe('card menu helpers', () => {
           comment: '조금 늦을 수 있어요',
           color: '#FFD6E7',
           choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
         },
       ],
       candidates: [
@@ -616,6 +647,7 @@ describe('card menu helpers', () => {
           comment: '가능해요',
           color: '#FFD6E7',
           choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
         },
       ],
       candidates: [
@@ -625,5 +657,44 @@ describe('card menu helpers', () => {
         },
       ],
     });
+  });
+
+  it('keeps per-candidate responses for poll result readability', () => {
+    const pollCard: PromiseCard = {
+      ...baseCard,
+      mode: 'POLL',
+      status: 'VOTING',
+      candidates: [
+        baseCard.candidates[0],
+        {
+          ...baseCard.candidates[0],
+          id: 'slot-2',
+          startsAt: june15At2000,
+          endsAt: getCandidateEndsAt(june15At2000),
+          label: '6월 15일 20:00',
+          shortLabel: '6/15 20:00',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+        },
+      ],
+    };
+
+    const respondedCard = applyReceivedCardResponse(pollCard, {
+      respondentId: 'respondent-1',
+      respondentName: '민지',
+      responses: [
+        { candidateId: 'slot-1', choice: 'YES' },
+        { candidateId: 'slot-2', choice: 'NO' },
+      ],
+    });
+
+    expect(respondedCard.participants[0]?.choice).toBe('YES');
+    expect(respondedCard.participants[0]?.responses).toEqual([
+      { candidateId: 'slot-1', choice: 'YES' },
+      { candidateId: 'slot-2', choice: 'NO' },
+    ]);
+    expect(respondedCard.candidates.map((candidate) => candidate.summary)).toEqual([
+      { yes: 1, maybe: 0, no: 0, unanswered: 1 },
+      { yes: 0, maybe: 0, no: 1, unanswered: 1 },
+    ]);
   });
 });

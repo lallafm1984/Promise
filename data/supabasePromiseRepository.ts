@@ -179,6 +179,14 @@ function mapCard(
       comment,
       color: getParticipantColor(index),
       choice: chooseParticipantChoice(respondentResponses),
+      responses: cardCandidates.map((candidate) => {
+        const response = respondentResponses.find((currentResponse) => currentResponse.candidate_id === candidate.id);
+
+        return {
+          candidateId: candidate.id,
+          choice: response?.choice ?? 'UNANSWERED',
+        };
+      }),
     };
   });
 

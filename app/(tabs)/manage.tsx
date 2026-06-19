@@ -14,7 +14,6 @@ import {
   canDeleteManagedCard,
   formatCandidateResponseSummary,
   getManagedCardInboxTab,
-  getManagedCardScope,
   getManagedStatusGroup,
   getShareUrlForClipboard,
   type ManagedCardActionKind,
@@ -22,7 +21,7 @@ import {
   type ManagedCardScope,
   type ManagedStatusGroup,
 } from '@/lib/cardMenu';
-import { getManagedCardDeleteConfirmation } from '@/lib/managedCards';
+import { getConfirmedCardSchedulePath, getManagedCardDeleteConfirmation } from '@/lib/managedCards';
 import {
   UNSHAREABLE_PREVIEW_CARD_MESSAGE,
   isShareablePublicCard,
@@ -58,6 +57,16 @@ function getParticipantChoiceBadgeStyle(choice: ResponseChoice) {
     case 'UNANSWERED':
       return styles.respondentChoiceUnanswered;
   }
+}
+
+function getParticipantCandidateChoice(participant: Participant, candidateId: string, candidateCount: number): ResponseChoice {
+  const response = participant.responses?.find((currentResponse) => currentResponse.candidateId === candidateId);
+
+  if (response) {
+    return response.choice;
+  }
+
+  return candidateCount === 1 ? participant.choice ?? 'UNANSWERED' : 'UNANSWERED';
 }
 
 const scopeTabs: Array<{ key: ManagedCardScope; label: string }> = [
@@ -197,17 +206,6 @@ export default function ManageCardsScreen() {
     }
   }, [group]);
   const activeTabKeys = tabsByScope[activeScope];
-  const scopeCounts = useMemo(
-    () =>
-      scopeTabs.reduce(
-        (counts, tab) => ({
-          ...counts,
-          [tab.key]: managedCards.filter((card) => getManagedCardScope(card) === tab.key).length,
-        }),
-        {} as Record<ManagedCardScope, number>,
-      ),
-    [managedCards],
-  );
   const tabCounts = useMemo(
     () =>
       activeTabKeys.reduce(
@@ -251,7 +249,7 @@ export default function ManageCardsScreen() {
     }
 
     if (action === 'SCHEDULE') {
-      router.push('/schedule');
+      router.push(getConfirmedCardSchedulePath(card));
       return;
     }
 
@@ -401,15 +399,6 @@ export default function ManageCardsScreen() {
     }
   }
 
-  function handleCancelResultCard() {
-    if (!resultCard || !canDeleteManagedCard(resultCard, now)) {
-      return;
-    }
-
-    setDeleteConfirmCard(resultCard);
-    setResultCard(null);
-  }
-
   async function handleSubmitResponse() {
     if (!responseCard) {
       return;
@@ -453,7 +442,6 @@ export default function ManageCardsScreen() {
     : false;
   const resultGroup = resultCard ? getManagedStatusGroup(resultCard, now) : null;
   const canConfirmResult = resultGroup === 'PENDING' || resultGroup === 'VOTING';
-  const canCancelResult = resultCard ? canDeleteManagedCard(resultCard, now) : false;
   const deleteConfirmation = deleteConfirmCard ? getManagedCardDeleteConfirmation(deleteConfirmCard) : null;
   const routeScrollKey = Array.isArray(scroll) ? scroll[0] : scroll;
 
@@ -491,9 +479,6 @@ export default function ManageCardsScreen() {
               <View style={[styles.scopeTabAccent, selected && styles.selectedScopeTabAccent]} />
               <View style={styles.scopeTabContent}>
                 <Text style={[styles.scopeTabLabel, selected && styles.selectedScopeTabLabel]}>{tab.label}</Text>
-                <Text style={[styles.scopeTabCount, selected && styles.selectedScopeTabCount]}>
-                  {isLoading ? '-' : `${scopeCounts[tab.key]}개`}
-                </Text>
               </View>
             </Pressable>
           );
@@ -706,22 +691,28 @@ export default function ManageCardsScreen() {
               </View>
 
               <View style={styles.resultList}>
-                {resultCard.candidates.map((candidate) => (
-                  <View key={candidate.id} style={styles.resultCandidate}>
-                    <View style={styles.resultCandidateCopy}>
-                      <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
-                      <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
+                {resultCard.candidates.map((candidate) => {
+                  const canConfirmCandidate = canConfirmResult && candidate.summary.yes > 0;
+
+                  return (
+                    <View key={candidate.id} style={styles.resultCandidate}>
+                      <View style={styles.resultCandidateCopy}>
+                        <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
+                        <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
+                      </View>
+                      {canConfirmCandidate ? (
+                        <ActionButton
+                          label={isConfirming ? '확정 중' : '이 시간 확정'}
+                          variant="primary"
+                          disabled={isConfirming}
+                          onPress={() => void handleConfirmCandidate(resultCard, candidate.id)}
+                        />
+                      ) : canConfirmResult ? (
+                        <Text style={styles.resultCandidateConfirmHint}>가능 응답이 있어야 확정할 수 있어요.</Text>
+                      ) : null}
                     </View>
-                    {canConfirmResult ? (
-                      <ActionButton
-                        label={isConfirming ? '확정 중' : '이 시간 확정'}
-                        variant="primary"
-                        disabled={isConfirming}
-                        onPress={() => void handleConfirmCandidate(resultCard, candidate.id)}
-                      />
-                    ) : null}
-                  </View>
-                ))}
+                  );
+                })}
               </View>
 
               <View style={styles.respondentPanel}>
@@ -758,6 +749,30 @@ export default function ManageCardsScreen() {
                               numberOfLines={3}>
                               {comment || '한마디 없음'}
                             </Text>
+                            {resultCard.mode === 'POLL' ? (
+                              <View style={styles.respondentCandidateChoices}>
+                                {resultCard.candidates.map((candidate) => {
+                                  const candidateChoice = getParticipantCandidateChoice(
+                                    participant,
+                                    candidate.id,
+                                    resultCard.candidates.length,
+                                  );
+
+                                  return (
+                                    <View
+                                      key={`${participant.id}-${candidate.id}`}
+                                      style={[
+                                        styles.respondentCandidateChoice,
+                                        getParticipantChoiceBadgeStyle(candidateChoice),
+                                      ]}>
+                                      <Text style={styles.respondentCandidateChoiceText}>
+                                        {candidate.shortLabel} {participantChoiceLabels[candidateChoice]}
+                                      </Text>
+                                    </View>
+                                  );
+                                })}
+                              </View>
+                            ) : null}
                           </View>
                         </View>
                       );
@@ -768,17 +783,6 @@ export default function ManageCardsScreen() {
                 )}
               </View>
 
-              {canCancelResult ? (
-                <View style={styles.resultFooterActions}>
-                  <ActionButton
-                    label="카드 취소"
-                    variant="danger"
-                    disabled={isConfirming}
-                    fullWidth
-                    onPress={handleCancelResultCard}
-                  />
-                </View>
-              ) : null}
             </Card>
           ) : null}
         </View>
@@ -995,14 +999,6 @@ const styles = StyleSheet.create({
     textAlign: 'left',
   },
   selectedScopeTabLabel: {
-    color: palette.surface,
-  },
-  scopeTabCount: {
-    color: palette.inkMuted,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  selectedScopeTabCount: {
     color: palette.surface,
   },
   statusTabs: {
@@ -1281,10 +1277,6 @@ const styles = StyleSheet.create({
   resultList: {
     gap: spacing.sm,
   },
-  resultFooterActions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
   respondentPanel: {
     backgroundColor: palette.paper,
     borderColor: palette.lineStrong,
@@ -1397,6 +1389,23 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 18,
   },
+  respondentCandidateChoices: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  respondentCandidateChoice: {
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.2,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 3,
+  },
+  respondentCandidateChoiceText: {
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '900',
+  },
   emptyRespondentText: {
     color: palette.inkMuted,
     fontSize: 13,
@@ -1425,6 +1434,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     lineHeight: 17,
+  },
+  resultCandidateConfirmHint: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.2,
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 17,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    textAlign: 'center',
   },
   responseCandidate: {
     backgroundColor: palette.paper,

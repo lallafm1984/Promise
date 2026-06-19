@@ -8,6 +8,7 @@ import {
   mergeRecipientProfileIds,
   getDeliveredCardManageGroup,
   getDeliveredCardManagePath,
+  getConfirmedCardSchedulePath,
   getManagedCardDeleteConfirmation,
   getRecentReceivedCardStatuses,
   getScheduleCardManageGroup,
@@ -118,6 +119,33 @@ describe('managed card local state', () => {
     expect(getScheduleCardManagePath(buildScheduleItem('2026-06-20T10:00:00.000Z'), 'from-schedule', now)).toBe(
       '/manage?group=CONFIRMED&scroll=from-schedule',
     );
+  });
+
+  it('targets the selected schedule date from a confirmed card', () => {
+    const card = {
+      ...buildCard('confirmed-card', 'CONFIRMED'),
+      selectedSlotId: 'selected-slot',
+      candidates: [
+        {
+          id: 'first-slot',
+          startsAt: '2026-06-19T19:00:00',
+          endsAt: '2026-06-19T20:00:00',
+          label: '6월 19일 19:00',
+          shortLabel: '6월 19일',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 0 },
+        },
+        {
+          id: 'selected-slot',
+          startsAt: '2026-06-20T20:00:00',
+          endsAt: '2026-06-20T21:00:00',
+          label: '6월 20일 20:00',
+          shortLabel: '6월 20일',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 0 },
+        },
+      ],
+    };
+
+    expect(getConfirmedCardSchedulePath(card)).toBe('/schedule?date=2026-06-20');
   });
 
   it('keeps declined received cards visible in the manage status tabs after refresh', () => {

@@ -15,6 +15,10 @@ export interface Participant {
   comment?: string;
   color: string;
   choice?: ResponseChoice;
+  responses?: Array<{
+    candidateId: string;
+    choice: ResponseChoice;
+  }>;
 }
 
 export interface CandidateSlot {

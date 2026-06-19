@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import {
-  Alert,
   Animated,
   Easing,
   LayoutAnimation,
@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import {
+  AlertTriangle,
   CalendarDays,
   Check,
   ChevronDown,
@@ -52,6 +53,7 @@ import {
   getScheduleDate,
   getVisibleCalendarRows,
   getWeekCells,
+  parseDateKey,
   startOfDay,
   toDateKey,
 } from '@/lib/scheduleCalendar';
@@ -59,6 +61,20 @@ import type { DisplayScheduleItem, PromiseCard, ScheduleColorKey, TodoItem } fro
 
 type ScheduleMode = 'SCHEDULE' | 'TODO';
 type ScheduleParticipant = NonNullable<DisplayScheduleItem['participants']>[number];
+type ScheduleDialogActionVariant = 'primary' | 'secondary' | 'danger';
+
+interface ScheduleDialogAction {
+  label: string;
+  variant?: ScheduleDialogActionVariant;
+  onPress: () => void;
+}
+
+interface ScheduleDialogState {
+  title: string;
+  body: string;
+  tone?: 'notice' | 'danger';
+  actions: ScheduleDialogAction[];
+}
 
 const colorOptions: Array<{
   key: ScheduleColorKey;
@@ -105,6 +121,7 @@ if (Platform.OS === 'android') {
 }
 
 export default function ScheduleScreen() {
+  const { date } = useLocalSearchParams<{ date?: string | string[] }>();
   const { scheduleItems } = usePromiseData();
   const { managedCards, requestManagedCardChange, removeManagedCard } = useManagedCards();
   const {
@@ -125,6 +142,7 @@ export default function ScheduleScreen() {
   const [editingScheduleItem, setEditingScheduleItem] = useState<DisplayScheduleItem | null>(null);
   const [editingCardScheduleItem, setEditingCardScheduleItem] = useState<DisplayScheduleItem | null>(null);
   const [cardActionItem, setCardActionItem] = useState<DisplayScheduleItem | null>(null);
+  const [scheduleDialog, setScheduleDialog] = useState<ScheduleDialogState | null>(null);
   const [isCardActionPending, setIsCardActionPending] = useState(false);
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
@@ -218,6 +236,23 @@ export default function ScheduleScreen() {
       }),
     [activeMode, isWeekTransitioning, weekDragX],
   );
+  const routeDateKey = Array.isArray(date) ? date[0] : date;
+  const applyRouteDateSelection = useCallback(() => {
+    const routeDate = parseDateKey(routeDateKey);
+
+    if (!routeDate) {
+      return;
+    }
+
+    setActiveMode('SCHEDULE');
+    setSelectedDate((currentDate) => {
+      const nextDate = startOfDay(routeDate);
+
+      return toDateKey(currentDate) === toDateKey(nextDate) ? currentDate : nextDate;
+    });
+  }, [routeDateKey]);
+
+  useFocusEffect(applyRouteDateSelection);
 
   function runLayoutTransition() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -397,6 +432,53 @@ export default function ScheduleScreen() {
     };
   }
 
+  function showScheduleNotice(title: string, body: string, tone: ScheduleDialogState['tone'] = 'notice') {
+    setScheduleDialog({
+      title,
+      body,
+      tone,
+      actions: [
+        {
+          label: '확인',
+          onPress: () => setScheduleDialog(null),
+        },
+      ],
+    });
+  }
+
+  function showScheduleConfirm({
+    title,
+    body,
+    confirmLabel,
+    onConfirm,
+  }: {
+    title: string;
+    body: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  }) {
+    setScheduleDialog({
+      title,
+      body,
+      tone: 'danger',
+      actions: [
+        {
+          label: '취소',
+          variant: 'secondary',
+          onPress: () => setScheduleDialog(null),
+        },
+        {
+          label: confirmLabel,
+          variant: 'danger',
+          onPress: () => {
+            setScheduleDialog(null);
+            onConfirm();
+          },
+        },
+      ],
+    });
+  }
+
   async function submitScheduleItem() {
     const title = scheduleTitle.trim();
 
@@ -419,7 +501,7 @@ export default function ScheduleScreen() {
         const card = findManagedCardForSchedule(editingCardScheduleItem);
 
         if (!card) {
-          Alert.alert('카드를 찾지 못했어요', '잠시 후 다시 시도해 주세요.');
+          showScheduleNotice('카드를 찾지 못했어요', '잠시 후 다시 시도해 주세요.', 'danger');
           return;
         }
 
@@ -427,7 +509,7 @@ export default function ScheduleScreen() {
         const result = await requestManagedCardChange(buildCardChangeRequest(editingCardScheduleItem, card));
 
         if (result.saveFailed) {
-          Alert.alert('카드를 저장하지 못했어요', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.');
+          showScheduleNotice('카드를 저장하지 못했어요', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.', 'danger');
           return;
         }
 
@@ -470,14 +552,14 @@ export default function ScheduleScreen() {
       const result = await removeManagedCard(item.cardId);
 
       if (result.deleteFailed) {
-        Alert.alert('일정을 삭제하지 못했어요', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.');
+        showScheduleNotice('일정을 삭제하지 못했어요', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.', 'danger');
         return;
       }
 
       setCardActionItem(null);
       runMotionFeedback(contentMotion);
     } catch {
-      Alert.alert('일정을 삭제하지 못했어요', '잠시 후 다시 시도해 주세요.');
+      showScheduleNotice('일정을 삭제하지 못했어요', '잠시 후 다시 시도해 주세요.', 'danger');
       runMotionFeedback(contentMotion);
     } finally {
       setIsCardActionPending(false);
@@ -485,16 +567,14 @@ export default function ScheduleScreen() {
   }
 
   function requestDeleteCardSchedule(item: DisplayScheduleItem) {
-    Alert.alert('일정 삭제하기', `"${item.title}" 일정을 취소하고 상대방에게 공유할까요?`, [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '공유하고 삭제',
-        style: 'destructive',
-        onPress: () => {
-          void shareAndDeleteCardSchedule(item);
-        },
+    showScheduleConfirm({
+      title: '일정 삭제하기',
+      body: `"${item.title}" 일정을 취소하고 상대방에게 공유할까요?`,
+      confirmLabel: '공유하고 삭제',
+      onConfirm: () => {
+        void shareAndDeleteCardSchedule(item);
       },
-    ]);
+    });
   }
 
   function requestDeleteEditingScheduleItem() {
@@ -504,23 +584,22 @@ export default function ScheduleScreen() {
       return;
     }
 
-    Alert.alert('일정 삭제', `"${item.title}" 일정을 삭제할까요?`, [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '삭제',
-        style: 'destructive',
-        onPress: () => {
-          void deleteManualScheduleItem(item.id)
-            .then(() => {
-              closeComposer();
-              runMotionFeedback(contentMotion);
-            })
-            .catch(() => {
-              runMotionFeedback(contentMotion);
-            });
-        },
+    showScheduleConfirm({
+      title: '일정 삭제',
+      body: `"${item.title}" 일정을 삭제할까요?`,
+      confirmLabel: '삭제',
+      onConfirm: () => {
+        void deleteManualScheduleItem(item.id)
+          .then(() => {
+            closeComposer();
+            runMotionFeedback(contentMotion);
+          })
+          .catch(() => {
+            showScheduleNotice('일정을 삭제하지 못했어요', '잠시 후 다시 시도해 주세요.', 'danger');
+            runMotionFeedback(contentMotion);
+          });
       },
-    ]);
+    });
   }
 
   function openTodoComposer() {
@@ -769,7 +848,63 @@ export default function ScheduleScreen() {
         onDelete={requestDeleteCardSchedule}
         onEdit={openCardScheduleEditor}
       />
+      <ScheduleDialogModal dialog={scheduleDialog} onClose={() => setScheduleDialog(null)} />
     </>
+  );
+}
+
+function ScheduleDialogModal({
+  dialog,
+  onClose,
+}: {
+  dialog: ScheduleDialogState | null;
+  onClose: () => void;
+}) {
+  return (
+    <Modal animationType="fade" onRequestClose={onClose} transparent visible={dialog !== null}>
+      <View style={styles.modalBackdrop}>
+        {dialog ? (
+          <View style={styles.dialogPanel}>
+            <View style={[styles.dialogIcon, dialog.tone === 'danger' ? styles.dialogDangerIcon : styles.dialogNoticeIcon]}>
+              <AlertTriangle size={22} color={dialog.tone === 'danger' ? palette.danger : palette.primaryDeep} />
+            </View>
+            <View style={styles.dialogCopy}>
+              <Text style={styles.modalTitle}>{dialog.title}</Text>
+              <Text style={styles.dialogBody}>{dialog.body}</Text>
+            </View>
+            <View style={styles.dialogActions}>
+              {dialog.actions.map((action) => {
+                const variant = action.variant ?? 'primary';
+
+                return (
+                  <Pressable
+                    key={action.label}
+                    accessibilityRole="button"
+                    onPress={action.onPress}
+                    style={({ pressed }) => [
+                      styles.dialogActionButton,
+                      variant === 'danger'
+                        ? styles.dialogDangerButton
+                        : variant === 'secondary'
+                          ? styles.dialogSecondaryButton
+                          : styles.dialogPrimaryButton,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.dialogActionText,
+                        variant === 'primary' && styles.dialogPrimaryActionText,
+                      ]}>
+                      {action.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+      </View>
+    </Modal>
   );
 }
 
@@ -2019,6 +2154,71 @@ const styles = StyleSheet.create({
     maxWidth: 390,
     padding: spacing.md,
     width: '100%',
+  },
+  dialogPanel: {
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.xl,
+    borderWidth: 2,
+    gap: spacing.md,
+    maxWidth: 390,
+    padding: spacing.lg,
+    width: '100%',
+  },
+  dialogIcon: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  dialogDangerIcon: {
+    backgroundColor: palette.coralSoft,
+  },
+  dialogNoticeIcon: {
+    backgroundColor: palette.amberSoft,
+  },
+  dialogCopy: {
+    gap: spacing.xs,
+  },
+  dialogBody: {
+    color: palette.inkMuted,
+    fontSize: 14,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  dialogActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  dialogActionButton: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: spacing.sm,
+  },
+  dialogPrimaryButton: {
+    backgroundColor: palette.primary,
+  },
+  dialogSecondaryButton: {
+    backgroundColor: palette.paper,
+  },
+  dialogDangerButton: {
+    backgroundColor: palette.coralSoft,
+  },
+  dialogActionText: {
+    color: palette.primaryDeep,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  dialogPrimaryActionText: {
+    color: palette.onLight,
   },
   modalHeader: {
     alignItems: 'center',

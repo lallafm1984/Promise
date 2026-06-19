@@ -66,6 +66,8 @@ export function getModeLabel(mode: AppointmentMode): string {
 const DEFAULT_MEETING_HOUR = 19;
 const DEFAULT_MEETING_MINUTE = 0;
 const MEETING_DURATION_MINUTES = 60;
+export const DUPLICATE_DRAFT_TIME_ERROR = '후보 시간을 서로 다르게 입력해 주세요.';
+export const PAST_DRAFT_TIME_ERROR = '지난 시간으로는 카드를 만들 수 없어요. 지금 이후의 날짜와 시간을 선택해 주세요.';
 
 function padTwo(value: number): string {
   return String(value).padStart(2, '0');
@@ -246,7 +248,15 @@ function hasDuplicateDraftTimes(times: string[]): boolean {
   return new Set(timeKeys).size !== timeKeys.length;
 }
 
-export function validateCardDraft(draft: CardDraft): DraftValidationResult {
+function hasPastDraftTimes(times: string[], now: Date): boolean {
+  return times.some((time) => {
+    const date = parseDraftDateTime(time);
+
+    return date !== null && date.getTime() <= now.getTime();
+  });
+}
+
+export function validateCardDraft(draft: CardDraft, now = new Date()): DraftValidationResult {
   const times = compactDraftTimes(draft.times);
 
   if (times.length === 0) {
@@ -262,7 +272,11 @@ export function validateCardDraft(draft: CardDraft): DraftValidationResult {
   }
 
   if (draft.mode === 'POLL' && hasDuplicateDraftTimes(times)) {
-    return { valid: false, error: '후보 시간을 서로 다르게 입력해 주세요.' };
+    return { valid: false, error: DUPLICATE_DRAFT_TIME_ERROR };
+  }
+
+  if (hasPastDraftTimes(times, now)) {
+    return { valid: false, error: PAST_DRAFT_TIME_ERROR };
   }
 
   return { valid: true };
@@ -607,6 +621,17 @@ export function applyReceivedCardResponse(card: PromiseCard, input: ApplyReceive
   const previousParticipant = card.participants.find((participant) => participant.id === input.respondentId);
   const responseByCandidateId = new Map(input.responses.map((response) => [response.candidateId, response]));
   const representativeChoice = getRepresentativeChoice(input.responses);
+  const responses = card.candidates.map((candidate) => {
+    const response = responseByCandidateId.get(candidate.id);
+    const previousResponse = previousParticipant?.responses?.find(
+      (currentResponse) => currentResponse.candidateId === candidate.id,
+    );
+
+    return {
+      candidateId: candidate.id,
+      choice: response?.choice ?? previousResponse?.choice ?? 'UNANSWERED',
+    };
+  });
   const displayName =
     input.respondentName.trim() ||
     previousParticipant?.displayName ||
@@ -621,6 +646,7 @@ export function applyReceivedCardResponse(card: PromiseCard, input: ApplyReceive
     comment,
     color: previousParticipant?.color ?? '#FFD6E7',
     choice: representativeChoice,
+    responses,
   };
 
   return {
@@ -632,6 +658,11 @@ export function applyReceivedCardResponse(card: PromiseCard, input: ApplyReceive
       : [...card.participants, participant],
     candidates: card.candidates.map((candidate) => {
       const response = responseByCandidateId.get(candidate.id);
+      const previousResponse = previousParticipant?.responses?.find(
+        (currentResponse) => currentResponse.candidateId === candidate.id,
+      );
+      const previousChoice =
+        previousResponse?.choice ?? (card.candidates.length === 1 ? previousParticipant?.choice : undefined);
 
       if (!response) {
         return candidate;
@@ -639,7 +670,7 @@ export function applyReceivedCardResponse(card: PromiseCard, input: ApplyReceive
 
       return {
         ...candidate,
-        summary: shiftCandidateSummary(candidate.summary, previousParticipant?.choice, response.choice),
+        summary: shiftCandidateSummary(candidate.summary, previousChoice, response.choice),
       };
     }),
   };

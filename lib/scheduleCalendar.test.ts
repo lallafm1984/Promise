@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getCalendarRows, getVisibleCalendarRows, getWeekCells, toDateKey } from './scheduleCalendar';
+import { getCalendarRows, getVisibleCalendarRows, getWeekCells, parseDateKey, toDateKey } from './scheduleCalendar';
 
 describe('schedule calendar', () => {
   it('stops at the final week needed for the visible month', () => {
@@ -46,5 +46,13 @@ describe('schedule calendar', () => {
       '2026-07-10',
       '2026-07-11',
     ]);
+  });
+
+  it('parses route date keys without accepting invalid calendar dates', () => {
+    const parsedDate = parseDateKey('2026-06-20');
+
+    expect(parsedDate ? toDateKey(parsedDate) : null).toBe('2026-06-20');
+    expect(parseDateKey('2026-02-30')).toBeNull();
+    expect(parseDateKey('2026/06/20')).toBeNull();
   });
 });

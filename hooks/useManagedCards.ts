@@ -34,7 +34,7 @@ function emitChange() {
 }
 
 export function useManagedCards() {
-  const { recentCards, isLoading, persisted, error, reload } = usePromiseData();
+  const { profile, recentCards, isLoading, persisted, error, reload } = usePromiseData();
   const createdCards = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const removedIds = useSyncExternalStore(subscribe, getRemovedSnapshot, getRemovedSnapshot);
 
@@ -168,6 +168,7 @@ export function useManagedCards() {
   );
 
   return {
+    profile,
     managedCards,
     addManagedCard,
     removeManagedCard,

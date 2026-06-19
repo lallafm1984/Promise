@@ -10,15 +10,18 @@ import {
   formatDraftDateTimeLabel,
   formatDraftTimeInputValue,
   canDeleteManagedCard,
+  getManagedCardInboxTab,
+  getManagedCardRowMetaLabel,
   getManagedCardAction,
-  getManagedStatusGroup,
+  getManagedCardTabLabel,
   getModeLabel,
   getPrimarySlot,
   mergeDraftDatePart,
   mergeDraftDateTime,
   mergeDraftTimePart,
   type ManagedCardActionKind,
-  type ManagedStatusGroup,
+  type ManagedCardCurrentProfile,
+  type ManagedCardInboxTab,
 } from '@/lib/cardMenu';
 import type { AppointmentMode, PromiseCard } from '@/types/promise';
 
@@ -47,7 +50,10 @@ interface CandidateTimeFieldsProps {
 
 interface ManagedCardsSectionProps {
   cards: PromiseCard[];
-  activeGroup?: ManagedStatusGroup;
+  activeTab: ManagedCardInboxTab;
+  currentProfile?: ManagedCardCurrentProfile | null;
+  emptyTitle: string;
+  emptyBody: string;
   onAction: (card: PromiseCard, action: ManagedCardActionKind) => void;
   onDelete?: (card: PromiseCard) => void;
 }
@@ -68,14 +74,6 @@ interface ActivePicker {
   index: number;
   mode: PickerMode;
 }
-
-const statusGroups: Array<{ key: ManagedStatusGroup; title: string }> = [
-  { key: 'PENDING', title: '\uC751\uB2F5 \uB300\uAE30' },
-  { key: 'VOTING', title: '\uD22C\uD45C \uC911' },
-  { key: 'DECLINED', title: '\uC751\uB2F5 \uAC70\uC808' },
-  { key: 'CONFIRMED', title: '\uD655\uC815\uB428' },
-  { key: 'PAST', title: '\uC9C0\uB09C \uC57D\uC18D' },
-];
 
 export function ModeSelector({ value, onChange }: ModeSelectorProps) {
   return (
@@ -326,50 +324,40 @@ export function DraftPreviewCard({ card }: { card: PromiseCard }) {
   );
 }
 
-export function ManagedCardsSection({ cards, activeGroup, onAction, onDelete }: ManagedCardsSectionProps) {
+export function ManagedCardsSection({
+  cards,
+  activeTab,
+  currentProfile,
+  emptyTitle,
+  emptyBody,
+  onAction,
+  onDelete,
+}: ManagedCardsSectionProps) {
   const now = new Date();
-  const visibleGroups = activeGroup ? statusGroups.filter((group) => group.key === activeGroup) : statusGroups;
+  const tabLabel = getManagedCardTabLabel(activeTab);
 
   if (cards.length === 0) {
     return (
       <Card style={styles.emptyCard}>
-        <Text style={styles.emptyTitle}>
-          {activeGroup ? '\uC774 \uC0C1\uD0DC\uC758 \uCE74\uB4DC\uAC00 \uC5C6\uC5B4\uC694' : '\uC544\uC9C1 \uB9CC\uB4E0 \uCE74\uB4DC\uAC00 \uC5C6\uC5B4\uC694'}
-        </Text>
-        <Text style={styles.emptyBody}>
-          {activeGroup
-            ? '\uB2E4\uB978 \uC0C1\uD0DC \uD0ED\uC744 \uD655\uC778\uD558\uAC70\uB098 \uC0C8 \uCE74\uB4DC\uB97C \uB9CC\uB4E4\uC5B4\uBCF4\uC138\uC694.'
-            : '\uC2DC\uAC04\uACFC \uC7A5\uC18C\uB9CC \uC815\uD558\uBA74 \uBC14\uB85C \uACF5\uC720\uD560 \uC218 \uC788\uC5B4\uC694.'}
-        </Text>
+        <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+        <Text style={styles.emptyBody}>{emptyBody}</Text>
       </Card>
     );
   }
 
   return (
     <View style={styles.managementStack}>
-      {visibleGroups.map((group) => {
-        const groupCards = cards.filter((card) => getManagedStatusGroup(card, now) === group.key);
-
-        if (groupCards.length === 0) {
-          return activeGroup ? (
-            <Card key={group.key} style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>{'\uC774 \uC0C1\uD0DC\uC758 \uCE74\uB4DC\uAC00 \uC5C6\uC5B4\uC694'}</Text>
-              <Text style={styles.emptyBody}>
-                {'\uB2E4\uB978 \uC0C1\uD0DC \uD0ED\uC744 \uD655\uC778\uD558\uAC70\uB098 \uC0C8 \uCE74\uB4DC\uB97C \uB9CC\uB4E4\uC5B4\uBCF4\uC138\uC694.'}
-              </Text>
-            </Card>
-          ) : null;
-        }
-
-        return (
-          <View key={group.key} style={styles.statusGroup}>
-            {!activeGroup ? <Text style={styles.statusGroupTitle}>{group.title}</Text> : null}
-            {groupCards.map((card) => (
-              <ManagedCardRow key={card.id} card={card} now={now} onAction={onAction} onDelete={onDelete} />
-            ))}
-          </View>
-        );
-      })}
+      <Text style={styles.statusGroupTitle}>{tabLabel}</Text>
+      {cards.map((card) => (
+        <ManagedCardRow
+          key={card.id}
+          card={card}
+          now={now}
+          currentProfile={currentProfile ?? undefined}
+          onAction={onAction}
+          onDelete={onDelete}
+        />
+      ))}
     </View>
   );
 }
@@ -377,18 +365,20 @@ export function ManagedCardsSection({ cards, activeGroup, onAction, onDelete }: 
 function ManagedCardRow({
   card,
   now,
+  currentProfile,
   onAction,
   onDelete,
 }: {
   card: PromiseCard;
   now: Date;
+  currentProfile?: ManagedCardCurrentProfile;
   onAction: ManagedCardsSectionProps['onAction'];
   onDelete?: ManagedCardsSectionProps['onDelete'];
 }) {
-  const statusGroup = getManagedStatusGroup(card, now);
   const action = getManagedCardAction(card, now);
   const primarySlot = getPrimarySlot(card);
-  const statusTitle = statusGroups.find((group) => group.key === statusGroup)?.title;
+  const statusTitle = getManagedCardTabLabel(getManagedCardInboxTab(card, now, currentProfile));
+  const rowMetaLabel = getManagedCardRowMetaLabel(card, currentProfile);
 
   return (
     <Card style={styles.managedCard}>
@@ -412,6 +402,9 @@ function ManagedCardRow({
       </View>
       <Text style={styles.managedTitle} numberOfLines={2}>
         {card.title}
+      </Text>
+      <Text style={styles.managedMeta} numberOfLines={1}>
+        {rowMetaLabel}
       </Text>
       <View style={styles.previewInfoList}>
         <InfoPill icon={<Clock3 size={15} color={palette.primaryDeep} />} text={primarySlot?.shortLabel ?? UNKNOWN_TIME_LABEL} />
@@ -734,6 +727,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '900',
     lineHeight: 23,
+  },
+  managedMeta: {
+    color: palette.primaryDeep,
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 17,
   },
   emptyCard: {
     backgroundColor: palette.paper,

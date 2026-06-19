@@ -13,9 +13,14 @@ import {
   buildShareMessage,
   canDeleteManagedCard,
   formatCandidateResponseSummary,
+  getManagedCardInboxTab,
+  getManagedCardScope,
+  getManagedCardTabLabel,
   getManagedStatusGroup,
   getShareUrlForClipboard,
   type ManagedCardActionKind,
+  type ManagedCardInboxTab,
+  type ManagedCardScope,
   type ManagedStatusGroup,
 } from '@/lib/cardMenu';
 import { getManagedCardDeleteConfirmation } from '@/lib/managedCards';
@@ -56,18 +61,76 @@ function getParticipantChoiceBadgeStyle(choice: ResponseChoice) {
   }
 }
 
-const statusTabs: Array<{ key: ManagedStatusGroup; label: string }> = [
-  { key: 'PENDING', label: '응답 대기' },
-  { key: 'VOTING', label: '투표 중' },
-  { key: 'DECLINED', label: '응답 거절' },
-  { key: 'CONFIRMED', label: '확정됨' },
-  { key: 'PAST', label: '지난 약속' },
+const scopeTabs: Array<{ key: ManagedCardScope; label: string }> = [
+  { key: 'SENT', label: '보낸 카드' },
+  { key: 'RECEIVED', label: '받은 카드' },
 ];
+
+const sentTabs: ManagedCardInboxTab[] = ['SENT_NO_RESPONSE', 'SENT_HAS_RESPONSE', 'SENT_CONFIRMED', 'SENT_PAST'];
+const receivedTabs: ManagedCardInboxTab[] = [
+  'RECEIVED_NEEDS_REPLY',
+  'RECEIVED_REPLIED',
+  'RECEIVED_CONFIRMED',
+  'RECEIVED_PAST',
+];
+
+const tabsByScope: Record<ManagedCardScope, ManagedCardInboxTab[]> = {
+  SENT: sentTabs,
+  RECEIVED: receivedTabs,
+};
+
+const emptyCopyByTab: Record<ManagedCardInboxTab, { title: string; body: string }> = {
+  SENT_NO_RESPONSE: {
+    title: '응답을 기다리는 카드가 없어요',
+    body: '새 카드를 만들거나, 이미 응답이 온 카드는 응답 도착 탭에서 확인해요.',
+  },
+  SENT_HAS_RESPONSE: {
+    title: '도착한 응답이 없어요',
+    body: '상대가 답하면 여기에서 가능 여부와 한마디를 바로 볼 수 있어요.',
+  },
+  SENT_CONFIRMED: {
+    title: '확정된 보낸 카드가 없어요',
+    body: '응답 결과에서 시간을 확정하면 일정으로 등록돼요.',
+  },
+  SENT_PAST: {
+    title: '지난 보낸 약속이 없어요',
+    body: '시간이 지난 확정 약속은 여기에 모여요.',
+  },
+  RECEIVED_NEEDS_REPLY: {
+    title: '답장할 카드가 없어요',
+    body: '친구가 보낸 카드가 오면 여기에서 바로 답장할 수 있어요.',
+  },
+  RECEIVED_REPLIED: {
+    title: '답장 완료한 카드가 없어요',
+    body: '내가 답한 카드는 생성자가 확정하기 전까지 여기에 남아요.',
+  },
+  RECEIVED_CONFIRMED: {
+    title: '확정된 받은 약속이 없어요',
+    body: '확정된 받은 약속은 일정에서도 함께 확인할 수 있어요.',
+  },
+  RECEIVED_PAST: {
+    title: '지난 받은 약속이 없어요',
+    body: '시간이 지난 받은 약속은 여기에 모여요.',
+  },
+};
+
+const legacyGroupTabs: Record<ManagedStatusGroup, ManagedCardInboxTab> = {
+  PENDING: 'SENT_NO_RESPONSE',
+  VOTING: 'SENT_NO_RESPONSE',
+  DECLINED: 'SENT_HAS_RESPONSE',
+  CONFIRMED: 'SENT_CONFIRMED',
+  PAST: 'SENT_PAST',
+};
+
+function getScopeForTab(tab: ManagedCardInboxTab): ManagedCardScope {
+  return tab.startsWith('RECEIVED') ? 'RECEIVED' : 'SENT';
+}
 
 export default function ManageCardsScreen() {
   const router = useRouter();
   const { group, scroll } = useLocalSearchParams<{ group?: string | string[]; scroll?: string | string[] }>();
   const {
+    profile,
     managedCards,
     isLoading,
     error,
@@ -78,7 +141,8 @@ export default function ManageCardsScreen() {
     reload: reloadManagedCards,
   } = useManagedCards();
   const { friends, isLoading: isFriendsLoading } = useFriends();
-  const [activeGroup, setActiveGroup] = useState<ManagedStatusGroup>('PENDING');
+  const [activeScope, setActiveScope] = useState<ManagedCardScope>('SENT');
+  const [activeTab, setActiveTab] = useState<ManagedCardInboxTab>('SENT_NO_RESPONSE');
   const [resultCard, setResultCard] = useState<PromiseCard | null>(null);
   const [responseCard, setResponseCard] = useState<PromiseCard | null>(null);
   const [reshareCard, setReshareCard] = useState<PromiseCard | null>(null);
@@ -92,6 +156,10 @@ export default function ManageCardsScreen() {
   const [isConfirming, setIsConfirming] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const now = useMemo(() => new Date(), [managedCards]);
+  const currentProfile = useMemo(
+    () => (profile ? { id: profile.id, displayName: profile.displayName } : undefined),
+    [profile],
+  );
   const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
     () => getPreviewFriendOptions(friends),
     [friends],
@@ -104,21 +172,50 @@ export default function ManageCardsScreen() {
   useEffect(() => {
     const routeGroup = Array.isArray(group) ? group[0] : group;
 
-    if (statusTabs.some((tab) => tab.key === routeGroup)) {
-      setActiveGroup(routeGroup as ManagedStatusGroup);
+    if (routeGroup && routeGroup in legacyGroupTabs) {
+      const nextTab = legacyGroupTabs[routeGroup as ManagedStatusGroup];
+      setActiveScope(getScopeForTab(nextTab));
+      setActiveTab(nextTab);
     }
   }, [group]);
-  const statusCounts = useMemo(
+  const activeTabKeys = tabsByScope[activeScope];
+  const scopeCounts = useMemo(
     () =>
-      statusTabs.reduce(
+      scopeTabs.reduce(
         (counts, tab) => ({
           ...counts,
-          [tab.key]: managedCards.filter((card) => getManagedStatusGroup(card, now) === tab.key).length,
+          [tab.key]: managedCards.filter((card) => getManagedCardScope(card) === tab.key).length,
         }),
-        {} as Record<ManagedStatusGroup, number>,
+        {} as Record<ManagedCardScope, number>,
       ),
-    [managedCards, now],
+    [managedCards],
   );
+  const tabCounts = useMemo(
+    () =>
+      activeTabKeys.reduce(
+        (counts, tab) => ({
+          ...counts,
+          [tab]: managedCards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === tab).length,
+        }),
+        {} as Partial<Record<ManagedCardInboxTab, number>>,
+      ),
+    [activeTabKeys, currentProfile, managedCards, now],
+  );
+  const visibleManagedCards = useMemo(
+    () => managedCards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === activeTab),
+    [activeTab, currentProfile, managedCards, now],
+  );
+  const activeEmptyCopy = emptyCopyByTab[activeTab];
+
+  function selectScope(scope: ManagedCardScope) {
+    setActiveScope(scope);
+    setActiveTab(tabsByScope[scope][0]);
+  }
+
+  function selectTab(tab: ManagedCardInboxTab) {
+    setActiveScope(getScopeForTab(tab));
+    setActiveTab(tab);
+  }
 
   async function handleManagedAction(card: PromiseCard, action: ManagedCardActionKind) {
     if (action === 'OPEN_RECEIVED') {
@@ -278,7 +375,7 @@ export default function ManageCardsScreen() {
     try {
       await confirmManagedCard(card.id, candidateId);
       setResultCard(null);
-      setActiveGroup('CONFIRMED');
+      selectTab('SENT_CONFIRMED');
     } catch {
       return;
     } finally {
@@ -315,7 +412,7 @@ export default function ManageCardsScreen() {
 
     try {
       const respondedCard = await respondToReceivedCard(responseCard.id, responses);
-      setActiveGroup(getManagedStatusGroup(respondedCard, now));
+      selectTab(getManagedCardInboxTab(respondedCard, now, currentProfile));
       setResponseCard(null);
     } catch {
       return;
@@ -351,7 +448,7 @@ export default function ManageCardsScreen() {
         <View style={styles.headerCopy}>
           <Text style={styles.kicker}>언제볼래</Text>
           <Text style={styles.title}>관리함</Text>
-          <Text style={styles.subtitle}>응답 대기, 투표 중, 확정된 약속을 상태별로 확인해요.</Text>
+          <Text style={styles.subtitle}>보낸 카드와 받은 카드를 나눠서 응답 상태를 확인해요.</Text>
         </View>
       </View>
 
@@ -362,20 +459,42 @@ export default function ManageCardsScreen() {
         </Card>
       ) : null}
 
-      <View style={styles.statusTabs}>
-        {statusTabs.map((tab) => {
-          const selected = activeGroup === tab.key;
+      <View style={styles.scopeTabs}>
+        {scopeTabs.map((tab) => {
+          const selected = activeScope === tab.key;
 
           return (
             <Pressable
               key={tab.key}
               accessibilityRole="button"
               accessibilityState={{ selected }}
-              onPress={() => setActiveGroup(tab.key)}
+              onPress={() => selectScope(tab.key)}
+              style={({ pressed }) => [styles.scopeTab, selected && styles.selectedScopeTab, pressed && styles.pressed]}>
+              <Text style={[styles.scopeTabLabel, selected && styles.selectedScopeTabLabel]}>{tab.label}</Text>
+              <Text style={[styles.scopeTabCount, selected && styles.selectedScopeTabCount]}>
+                {isLoading ? '-' : scopeCounts[tab.key]}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.statusTabs}>
+        {activeTabKeys.map((tab) => {
+          const selected = activeTab === tab;
+
+          return (
+            <Pressable
+              key={tab}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => selectTab(tab)}
               style={({ pressed }) => [styles.statusTab, selected && styles.selectedStatusTab, pressed && styles.pressed]}>
-              <Text style={[styles.statusTabLabel, selected && styles.selectedStatusTabLabel]}>{tab.label}</Text>
+              <Text style={[styles.statusTabLabel, selected && styles.selectedStatusTabLabel]}>
+                {getManagedCardTabLabel(tab)}
+              </Text>
               <Text style={[styles.statusTabCount, selected && styles.selectedStatusTabCount]}>
-                {isLoading ? '-' : statusCounts[tab.key]}
+                {isLoading ? '-' : (tabCounts[tab] ?? 0)}
               </Text>
             </Pressable>
           );
@@ -383,8 +502,11 @@ export default function ManageCardsScreen() {
       </View>
 
       <ManagedCardsSection
-        cards={managedCards}
-        activeGroup={activeGroup}
+        cards={visibleManagedCards}
+        activeTab={activeTab}
+        currentProfile={currentProfile}
+        emptyTitle={activeEmptyCopy.title}
+        emptyBody={activeEmptyCopy.body}
         onAction={(card, action) => void handleManagedAction(card, action)}
         onDelete={(card) => void handleDeleteCard(card)}
       />
@@ -802,6 +924,56 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     lineHeight: 19,
+  },
+  scopeTabs: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  scopeTab: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    minHeight: 50,
+    minWidth: 0,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  selectedScopeTab: {
+    backgroundColor: palette.lime,
+  },
+  scopeTabLabel: {
+    color: palette.ink,
+    flexShrink: 1,
+    fontSize: 15,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  selectedScopeTabLabel: {
+    color: palette.ink,
+  },
+  scopeTabCount: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+    minWidth: 28,
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    textAlign: 'center',
+  },
+  selectedScopeTabCount: {
+    backgroundColor: palette.surface,
+    color: palette.primaryDeep,
   },
   statusTabs: {
     flexDirection: 'row',

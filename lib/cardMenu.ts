@@ -1,6 +1,7 @@
 import type {
   AppointmentMode,
   CandidateSlot,
+  HostProfile,
   Participant,
   PromiseCard,
   ReceivedCardResponseChoice,
@@ -20,6 +21,28 @@ export type DraftValidationResult = { valid: true } | { valid: false; error: str
 export type ManagedStatusGroup = 'PENDING' | 'VOTING' | 'DECLINED' | 'CONFIRMED' | 'PAST';
 
 export type ManagedCardActionKind = 'RESHARE' | 'RESULTS' | 'SCHEDULE' | 'RECREATE' | 'OPEN_RECEIVED';
+
+export type ManagedCardScope = 'SENT' | 'RECEIVED';
+
+export type ManagedCardInboxTab =
+  | 'SENT_NO_RESPONSE'
+  | 'SENT_HAS_RESPONSE'
+  | 'SENT_CONFIRMED'
+  | 'SENT_PAST'
+  | 'RECEIVED_NEEDS_REPLY'
+  | 'RECEIVED_REPLIED'
+  | 'RECEIVED_CONFIRMED'
+  | 'RECEIVED_PAST';
+
+export type ManagedCardCurrentProfile = Pick<HostProfile, 'id' | 'displayName'>;
+
+export interface ManagedCardResponseStats {
+  total: number;
+  yes: number;
+  maybe: number;
+  no: number;
+  unanswered: number;
+}
 
 export interface ManagedCardAction {
   kind: ManagedCardActionKind;
@@ -263,9 +286,134 @@ export function formatCandidateResponseSummary(summary: CandidateSlot['summary']
   return `가능 ${summary.yes} · 어려움 ${summary.no}`;
 }
 
+export function getManagedCardScope(card: PromiseCard): ManagedCardScope {
+  return card.requesterName?.trim() ? 'RECEIVED' : 'SENT';
+}
+
+export function getManagedCardResponseStats(card: PromiseCard): ManagedCardResponseStats {
+  return card.participants.reduce<ManagedCardResponseStats>(
+    (stats, participant) => {
+      const choice = participant.choice ?? 'UNANSWERED';
+
+      if (choice === 'YES') {
+        stats.yes += 1;
+        stats.total += 1;
+      } else if (choice === 'MAYBE') {
+        stats.maybe += 1;
+        stats.total += 1;
+      } else if (choice === 'NO') {
+        stats.no += 1;
+        stats.total += 1;
+      } else {
+        stats.unanswered += 1;
+      }
+
+      return stats;
+    },
+    { total: 0, yes: 0, maybe: 0, no: 0, unanswered: 0 },
+  );
+}
+
+function normalizeProfileText(value: string | undefined): string {
+  return value?.trim().replace(/\s+/g, ' ') ?? '';
+}
+
+function hasCurrentProfileResponse(card: PromiseCard, currentProfile?: ManagedCardCurrentProfile): boolean {
+  if (!currentProfile) {
+    return false;
+  }
+
+  const profileName = normalizeProfileText(currentProfile.displayName);
+
+  return card.participants.some((participant) => {
+    const isCurrentProfile =
+      participant.id === currentProfile.id || normalizeProfileText(participant.displayName) === profileName;
+    const isAnswered = participant.choice !== undefined && participant.choice !== 'UNANSWERED';
+
+    return isCurrentProfile && isAnswered;
+  });
+}
+
+export function getManagedCardInboxTab(
+  card: PromiseCard,
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): ManagedCardInboxTab {
+  const group = getManagedStatusGroup(card, now);
+
+  if (getManagedCardScope(card) === 'RECEIVED') {
+    if (group === 'PAST') {
+      return 'RECEIVED_PAST';
+    }
+
+    if (group === 'CONFIRMED') {
+      return 'RECEIVED_CONFIRMED';
+    }
+
+    return hasCurrentProfileResponse(card, currentProfile) ? 'RECEIVED_REPLIED' : 'RECEIVED_NEEDS_REPLY';
+  }
+
+  if (group === 'PAST') {
+    return 'SENT_PAST';
+  }
+
+  if (group === 'CONFIRMED') {
+    return 'SENT_CONFIRMED';
+  }
+
+  if (group === 'DECLINED' || hasManagedCardResponses(card)) {
+    return 'SENT_HAS_RESPONSE';
+  }
+
+  return 'SENT_NO_RESPONSE';
+}
+
+export function getManagedCardTabLabel(tab: ManagedCardInboxTab): string {
+  switch (tab) {
+    case 'SENT_NO_RESPONSE':
+      return '응답 없음';
+    case 'SENT_HAS_RESPONSE':
+      return '응답 도착';
+    case 'SENT_CONFIRMED':
+    case 'RECEIVED_CONFIRMED':
+      return '확정됨';
+    case 'SENT_PAST':
+    case 'RECEIVED_PAST':
+      return '지난 약속';
+    case 'RECEIVED_NEEDS_REPLY':
+      return '답장할 카드';
+    case 'RECEIVED_REPLIED':
+      return '답장 완료';
+  }
+}
+
+export function getManagedCardRowMetaLabel(card: PromiseCard, currentProfile?: ManagedCardCurrentProfile): string {
+  if (getManagedCardScope(card) === 'RECEIVED') {
+    return hasCurrentProfileResponse(card, currentProfile) ? '내 답장 완료' : '답장 필요';
+  }
+
+  const stats = getManagedCardResponseStats(card);
+
+  if (stats.total === 0) {
+    return '아직 응답 없음';
+  }
+
+  const parts = [`응답 ${stats.total}명`];
+
+  if (stats.yes > 0) {
+    parts.push(`가능 ${stats.yes}`);
+  }
+
+  if (stats.no > 0) {
+    parts.push(`어려움 ${stats.no}`);
+  }
+
+  return parts.join(' · ');
+}
+
 function hasManagedCardResponses(card: PromiseCard): boolean {
   return (
-    card.participants.length > 0 ||
+    getManagedCardResponseStats(card).total > 0 ||
     card.candidates.some((candidate) => candidate.summary.yes > 0 || candidate.summary.maybe > 0 || candidate.summary.no > 0)
   );
 }
@@ -309,7 +457,9 @@ export function getManagedCardAction(card: PromiseCard, now = new Date()): Manag
         ? { kind: 'RESULTS', label: '결과 보기' }
         : { kind: 'RESHARE', label: '공유 다시하기' };
     case 'VOTING':
-      return { kind: 'RESULTS', label: '결과 보기' };
+      return hasManagedCardResponses(card)
+        ? { kind: 'RESULTS', label: '결과 보기' }
+        : { kind: 'RESHARE', label: '공유 다시하기' };
     case 'DECLINED':
       return hasManagedCardResponses(card)
         ? { kind: 'RESULTS', label: '결과 보기' }
@@ -372,7 +522,7 @@ export function mergeManagedCards(ownedCards: PromiseCard[], receivedCards: Prom
 }
 
 export function canDeleteManagedCard(card: PromiseCard, now = new Date()): boolean {
-  return ['PENDING', 'VOTING'].includes(getManagedStatusGroup(card, now));
+  return getManagedCardScope(card) === 'SENT' && ['PENDING', 'VOTING'].includes(getManagedStatusGroup(card, now));
 }
 
 export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleItem | null {

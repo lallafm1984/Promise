@@ -17,6 +17,11 @@ import {
   getCandidateEndsAt,
   getGeneratedCardTitle,
   getManagedCardAction,
+  getManagedCardInboxTab,
+  getManagedCardResponseStats,
+  getManagedCardScope,
+  getManagedCardTabLabel,
+  getManagedCardRowMetaLabel,
   getManagedStatusGroup,
   getModeLabel,
   getRecipientProfileIds,
@@ -223,8 +228,8 @@ describe('card menu helpers', () => {
       label: '결과 보기',
     });
     expect(getManagedCardAction({ ...baseCard, status: 'VOTING' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
-      kind: 'RESULTS',
-      label: '결과 보기',
+      kind: 'RESHARE',
+      label: '공유 다시하기',
     });
     expect(getManagedCardAction({ ...baseCard, status: 'CONFIRMED' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
       kind: 'SCHEDULE',
@@ -261,6 +266,76 @@ describe('card menu helpers', () => {
       kind: 'RECREATE',
       label: '다시 만들기',
     });
+  });
+
+  it('splits managed cards into sender and receiver friendly tabs', () => {
+    const ownerNoResponseCard: PromiseCard = {
+      ...baseCard,
+      status: 'PENDING',
+      participants: [],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 } }],
+    };
+    const ownerRespondedCard: PromiseCard = {
+      ...baseCard,
+      status: 'PENDING',
+      participants: [{ id: 'respondent-1', name: '민', displayName: '민지', color: '#FFD6E7', choice: 'NO' }],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 } }],
+    };
+    const receivedNeedsReplyCard: PromiseCard = {
+      ...baseCard,
+      requesterName: '하린',
+      participants: [{ id: 'other-profile', name: '지', displayName: '지우', color: '#CFF3E3', choice: 'YES' }],
+    };
+    const receivedRepliedCard: PromiseCard = {
+      ...receivedNeedsReplyCard,
+      participants: [
+        { id: 'my-profile', name: '민', displayName: '민서', color: '#FFD6E7', choice: 'YES' },
+        { id: 'other-profile', name: '지', displayName: '지우', color: '#CFF3E3', choice: 'NO' },
+      ],
+    };
+
+    expect(getManagedCardScope(ownerNoResponseCard)).toBe('SENT');
+    expect(getManagedCardScope(receivedNeedsReplyCard)).toBe('RECEIVED');
+    expect(getManagedCardInboxTab(ownerNoResponseCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(
+      'SENT_NO_RESPONSE',
+    );
+    expect(getManagedCardInboxTab(ownerRespondedCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(
+      'SENT_HAS_RESPONSE',
+    );
+    expect(
+      getManagedCardInboxTab(receivedNeedsReplyCard, new Date('2026-06-12T12:00:00+09:00'), {
+        id: 'my-profile',
+        displayName: '민서',
+      }),
+    ).toBe('RECEIVED_NEEDS_REPLY');
+    expect(
+      getManagedCardInboxTab(receivedRepliedCard, new Date('2026-06-12T12:00:00+09:00'), {
+        id: 'my-profile',
+        displayName: '민서',
+      }),
+    ).toBe('RECEIVED_REPLIED');
+  });
+
+  it('builds compact response counts for managed card rows', () => {
+    const respondedCard: PromiseCard = {
+      ...baseCard,
+      participants: [
+        { id: 'respondent-1', name: '민', displayName: '민지', color: '#FFD6E7', choice: 'YES' },
+        { id: 'respondent-2', name: '지', displayName: '지우', color: '#CFF3E3', choice: 'NO' },
+        { id: 'respondent-3', name: '수', displayName: '수아', color: '#FFF0B8', choice: 'UNANSWERED' },
+      ],
+    };
+
+    expect(getManagedCardResponseStats(respondedCard)).toEqual({
+      total: 2,
+      yes: 1,
+      maybe: 0,
+      no: 1,
+      unanswered: 1,
+    });
+    expect(getManagedCardRowMetaLabel(respondedCard)).toBe('응답 2명 · 가능 1 · 어려움 1');
+    expect(getManagedCardRowMetaLabel({ ...baseCard, participants: [] })).toBe('아직 응답 없음');
+    expect(getManagedCardTabLabel('SENT_HAS_RESPONSE')).toBe('응답 도착');
   });
 
   it('opens received cards instead of owner-only management actions', () => {
@@ -310,6 +385,12 @@ describe('card menu helpers', () => {
     expect(canDeleteManagedCard(pastOwnerCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
     expect(canDeleteManagedCard({ ...baseCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
     expect(canDeleteManagedCard({ ...baseCard, status: 'VOTING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
+    expect(
+      canDeleteManagedCard(
+        { ...baseCard, requesterName: '하린', status: 'PENDING' },
+        new Date('2026-06-12T12:00:00+09:00'),
+      ),
+    ).toBe(false);
     expect(canDeleteManagedCard({ ...baseCard, status: 'DECLINED' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
     expect(canDeleteManagedCard({ ...baseCard, status: 'CONFIRMED' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
     expect(canDeleteManagedCard(pastReceivedCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);

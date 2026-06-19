@@ -17,7 +17,7 @@ export interface CardDraft {
 
 export type DraftValidationResult = { valid: true } | { valid: false; error: string };
 
-export type ManagedStatusGroup = 'PENDING' | 'VOTING' | 'CONFIRMED' | 'PAST';
+export type ManagedStatusGroup = 'PENDING' | 'VOTING' | 'DECLINED' | 'CONFIRMED' | 'PAST';
 
 export type ManagedCardActionKind = 'RESHARE' | 'RESULTS' | 'SCHEDULE' | 'RECREATE' | 'OPEN_RECEIVED';
 
@@ -259,9 +259,20 @@ export function getPrimarySlot(card: PromiseCard): CandidateSlot | undefined {
   return card.candidates.find((candidate) => candidate.id === card.selectedSlotId) ?? card.candidates[0];
 }
 
+export function formatCandidateResponseSummary(summary: CandidateSlot['summary']): string {
+  return `가능 ${summary.yes} · 어려움 ${summary.no}`;
+}
+
+function hasManagedCardResponses(card: PromiseCard): boolean {
+  return (
+    card.participants.length > 0 ||
+    card.candidates.some((candidate) => candidate.summary.yes > 0 || candidate.summary.maybe > 0 || candidate.summary.no > 0)
+  );
+}
+
 export function getManagedStatusGroup(card: PromiseCard, now = new Date()): ManagedStatusGroup {
   if (card.status === 'DECLINED') {
-    return 'PAST';
+    return 'DECLINED';
   }
 
   if (card.status === 'CONFIRMED') {
@@ -294,9 +305,15 @@ export function getManagedCardAction(card: PromiseCard, now = new Date()): Manag
 
   switch (getManagedStatusGroup(card, now)) {
     case 'PENDING':
-      return { kind: 'RESHARE', label: '공유 다시하기' };
+      return hasManagedCardResponses(card)
+        ? { kind: 'RESULTS', label: '결과 보기' }
+        : { kind: 'RESHARE', label: '공유 다시하기' };
     case 'VOTING':
       return { kind: 'RESULTS', label: '결과 보기' };
+    case 'DECLINED':
+      return hasManagedCardResponses(card)
+        ? { kind: 'RESULTS', label: '결과 보기' }
+        : { kind: 'RECREATE', label: '다시 만들기' };
     case 'CONFIRMED':
       return { kind: 'SCHEDULE', label: '일정 보기' };
     case 'PAST':
@@ -306,7 +323,7 @@ export function getManagedCardAction(card: PromiseCard, now = new Date()): Manag
 
 export function buildShareMessage(card: PromiseCard): string {
   const lines = [
-    '언제볼래? 약속 초대가 왔어요.',
+    '언제볼래? 약속 초대가 왔어요',
     `${card.candidates.map((candidate) => candidate.label).join(' / ')} · ${card.location}`,
   ];
   const message = card.message.trim();
@@ -315,11 +332,18 @@ export function buildShareMessage(card: PromiseCard): string {
     lines.push(`한마디: ${message}`);
   }
 
-  lines.push('');
-  lines.push('아래 링크에서 가능 여부를 알려줘.');
-  lines.push(card.sharedUrl);
+  lines.push('가능 여부 알려줘');
+  lines.push(getShareUrlForMessage(card));
 
   return lines.join('\n');
+}
+
+export function getShareUrlForMessage(card: Pick<PromiseCard, 'sharedUrl'>): string {
+  return card.sharedUrl.trim().replace(/^https?:\/\//i, '');
+}
+
+export function getShareUrlForClipboard(card: Pick<PromiseCard, 'sharedUrl'>): string {
+  return card.sharedUrl;
 }
 
 export function getRecipientProfileIds(
@@ -348,7 +372,7 @@ export function mergeManagedCards(ownedCards: PromiseCard[], receivedCards: Prom
 }
 
 export function canDeleteManagedCard(card: PromiseCard, now = new Date()): boolean {
-  return ['PENDING', 'VOTING', 'CONFIRMED', 'PAST'].includes(getManagedStatusGroup(card, now));
+  return ['PENDING', 'VOTING'].includes(getManagedStatusGroup(card, now));
 }
 
 export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleItem | null {

@@ -47,6 +47,21 @@ export function getSupabaseProviderCallbackUrl(projectUrl = process.env.EXPO_PUB
   }
 }
 
+export function shouldShowAuthSetupGuide(
+  configured: boolean,
+  override = process.env.EXPO_PUBLIC_SHOW_AUTH_SETUP,
+) {
+  if (override === 'true') {
+    return true;
+  }
+
+  if (override === 'false') {
+    return false;
+  }
+
+  return !configured;
+}
+
 export function isAuthCallbackUrl(url: string | null | undefined): url is string {
   if (!url) {
     return false;

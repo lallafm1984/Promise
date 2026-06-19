@@ -16,6 +16,10 @@ export function createPromiseDataRefreshChannelName() {
   return `promise-data-refresh-${promiseDataRefreshChannelSequence}`;
 }
 
+export function shouldReloadPromiseDataForAppState(state: string) {
+  return state === 'active';
+}
+
 export function getPromiseDataLoadErrorState(_current: PromiseDataState, error: unknown): PromiseDataState {
   return {
     profile: null,

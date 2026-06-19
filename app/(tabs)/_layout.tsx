@@ -4,9 +4,7 @@ import { Platform, type ColorValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { palette } from '@/constants/theme';
-
-const TAB_BAR_BASE_HEIGHT = 72;
-const MIN_NATIVE_BOTTOM_INSET = 16;
+import { getNativeBottomInset, getTabBarHeight } from '@/lib/layoutInsets';
 
 function tabIcon(Icon: LucideIcon) {
   return function TabIcon({ color, size }: { color: ColorValue; size: number }) {
@@ -16,7 +14,7 @@ function tabIcon(Icon: LucideIcon) {
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const bottomInset = Platform.OS === 'web' ? 0 : Math.max(insets.bottom, MIN_NATIVE_BOTTOM_INSET);
+  const bottomInset = Platform.OS === 'web' ? 0 : getNativeBottomInset(insets.bottom);
 
   return (
     <Tabs
@@ -33,7 +31,7 @@ export default function TabLayout() {
           alignSelf: Platform.OS === 'web' ? 'flex-start' : 'center',
           backgroundColor: palette.surface,
           borderTopColor: palette.line,
-          height: TAB_BAR_BASE_HEIGHT + bottomInset,
+          height: getTabBarHeight(bottomInset),
           maxWidth: 430,
           paddingBottom: 10 + bottomInset,
           paddingTop: 8,

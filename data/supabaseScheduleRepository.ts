@@ -199,6 +199,41 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
     return mapAppointment(data as AppointmentRow);
   },
 
+  async updateManualScheduleItem(scheduleId, input) {
+    const client = assertSupabase();
+    const user = await getAuthenticatedUser();
+    const values = cleanManualScheduleInput(input);
+    const { data, error } = await client
+      .from('appointments')
+      .update(values)
+      .eq('id', scheduleId)
+      .eq('owner_id', user.id)
+      .is('card_id', null)
+      .select('id, title, location, starts_at, ends_at, color_key')
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return mapAppointment(data as AppointmentRow);
+  },
+
+  async deleteManualScheduleItem(scheduleId) {
+    const client = assertSupabase();
+    const user = await getAuthenticatedUser();
+    const { error } = await client
+      .from('appointments')
+      .delete()
+      .eq('id', scheduleId)
+      .eq('owner_id', user.id)
+      .is('card_id', null);
+
+    if (error) {
+      throw error;
+    }
+  },
+
   async listTodos() {
     const client = assertSupabase();
     const user = await getAuthenticatedUser();

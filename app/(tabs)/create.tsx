@@ -25,6 +25,7 @@ import {
   getCandidateEndsAt,
   getGeneratedCardTitle,
   getModeLabel,
+  getShareUrlForClipboard,
   removeDraftTimeAtIndex,
   validateCardDraft,
   type CardDraft,
@@ -246,7 +247,7 @@ export default function CreateCardScreen() {
 
     try {
       const shareable = await getShareablePreviewCard(previewCard, publishPreview);
-      await Clipboard.setStringAsync(shareable.card.sharedUrl);
+      await Clipboard.setStringAsync(getShareUrlForClipboard(shareable.card));
       goToDeliveredCard(shareable.card);
     } catch (error) {
       setFeedback(getPreviewActionFeedback(error, '링크를 복사하지 못했어요. 다시 시도해 주세요.'));
@@ -404,7 +405,7 @@ export default function CreateCardScreen() {
 
   return (
     <>
-      <AppScreen keyboardAware scrollRef={screenScrollRef}>
+      <AppScreen keyboardAware reserveBottomTabs scrollRef={screenScrollRef}>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />

@@ -34,7 +34,7 @@ function emitChange() {
 }
 
 export function useManagedCards() {
-  const { recentCards, isLoading, persisted, error } = usePromiseData();
+  const { recentCards, isLoading, persisted, error, reload } = usePromiseData();
   const createdCards = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const removedIds = useSyncExternalStore(subscribe, getRemovedSnapshot, getRemovedSnapshot);
 
@@ -115,6 +115,31 @@ export function useManagedCards() {
     };
   }, []);
 
+  const requestManagedCardChange = useCallback(async (card: PromiseCard) => {
+    const { persisted, repository } = await getActivePromiseRepository();
+    let savedCard = card;
+    let didPersist = persisted;
+    let saveFailed = false;
+
+    try {
+      savedCard = await repository.requestManagedCardChange(card);
+    } catch (error) {
+      console.warn('[PromiseCards] Failed to request managed card change', error);
+      didPersist = false;
+      saveFailed = true;
+    }
+
+    removedCardIds = removedCardIds.filter((cardId) => cardId !== savedCard.id);
+    localCards = mergeManagedCardIntoLocalCards(localCards, savedCard, card.id);
+    emitChange();
+
+    return {
+      card: savedCard,
+      persisted: didPersist,
+      saveFailed,
+    };
+  }, []);
+
   const confirmManagedCard = useCallback(async (cardId: string, candidateId: string) => {
     const { repository } = await getActivePromiseRepository();
     const confirmedCard = await repository.confirmManagedCard({ cardId, candidateId });
@@ -147,10 +172,12 @@ export function useManagedCards() {
     addManagedCard,
     removeManagedCard,
     sendManagedCardToRecipients,
+    requestManagedCardChange,
     confirmManagedCard,
     respondToReceivedCard,
     isLoading,
     persisted,
     error,
+    reload,
   };
 }

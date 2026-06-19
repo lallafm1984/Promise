@@ -1,4 +1,8 @@
-import { applyReceivedCardResponse, buildConfirmedCard, buildScheduleItemFromConfirmedCard } from '@/lib/cardMenu';
+import {
+  applyReceivedCardResponse,
+  buildConfirmedCard,
+  buildScheduleItemFromConfirmedCard,
+} from '@/lib/cardMenu';
 import { mergeRecipientProfileIds } from '@/lib/managedCards';
 import type {
   ConfirmCardInput,
@@ -212,11 +216,13 @@ function applyReceivedResponse(card: PromiseCard, input: RespondToReceivedCardIn
     return card;
   }
 
-  return applyReceivedCardResponse(card, {
+  const respondedCard = applyReceivedCardResponse(card, {
     respondentId: profile.id,
     respondentName: profile.displayName,
     responses: input.responses,
   });
+
+  return respondedCard;
 }
 
 export const mockPromiseRepository: PromiseRepository = {
@@ -256,8 +262,26 @@ export const mockPromiseRepository: PromiseRepository = {
 
     return updatedCard;
   },
+  async requestManagedCardChange(card) {
+    const updatedCard: PromiseCard = {
+      ...card,
+      status: card.mode === 'DIRECT' ? 'PENDING' : 'VOTING',
+      selectedSlotId: card.mode === 'DIRECT' ? card.candidates[0]?.id : undefined,
+      participants: [],
+      candidates: card.candidates.map((candidate) => ({
+        ...candidate,
+        summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+      })),
+    };
+
+    cards = [updatedCard, ...cards.filter((currentCard) => currentCard.id !== card.id)];
+    schedule = schedule.filter((item) => item.cardId !== card.id);
+
+    return updatedCard;
+  },
   async deleteManagedCard(cardId) {
     cards = cards.filter((card) => card.id !== cardId);
+    schedule = schedule.filter((item) => item.cardId !== cardId);
   },
   async confirmManagedCard(input) {
     const currentCard = cards.find((card) => card.id === input.cardId);
@@ -285,6 +309,13 @@ export const mockPromiseRepository: PromiseRepository = {
     }
 
     cards = cards.map((card) => (card.id === input.cardId ? respondedCard : card));
+    const scheduleItem = buildScheduleItemFromConfirmedCard(respondedCard);
+
+    if (scheduleItem) {
+      schedule = [scheduleItem, ...schedule.filter((item) => item.cardId !== respondedCard.id)];
+    } else if (respondedCard.status === 'DECLINED') {
+      schedule = schedule.filter((item) => item.cardId !== respondedCard.id);
+    }
 
     return respondedCard;
   },

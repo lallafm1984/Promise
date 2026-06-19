@@ -4,6 +4,7 @@ import type { HostProfile, PromiseCard, ScheduleItem } from '@/types/promise';
 import {
   createPromiseDataRefreshChannelName,
   getPromiseDataLoadErrorState,
+  shouldReloadPromiseDataForAppState,
   type PromiseDataState,
 } from './promiseDataState';
 
@@ -86,5 +87,11 @@ describe('promise data state', () => {
     expect(getPromiseDataLoadErrorState(current, 'bad')).toMatchObject({
       error: '데이터를 불러오지 못했어요.',
     });
+  });
+
+  it('reloads promise data when the app returns to the foreground', () => {
+    expect(shouldReloadPromiseDataForAppState('active')).toBe(true);
+    expect(shouldReloadPromiseDataForAppState('background')).toBe(false);
+    expect(shouldReloadPromiseDataForAppState('inactive')).toBe(false);
   });
 });

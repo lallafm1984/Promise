@@ -11,6 +11,7 @@ import {
   getAuthRedirectAllowList,
   getAuthRedirectUrl,
   getSupabaseProviderCallbackUrl,
+  shouldShowAuthSetupGuide,
   signInWithSocialProvider,
   type SocialProviderId,
 } from '@/lib/supabaseAuth';
@@ -49,6 +50,7 @@ export default function LoginScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const redirectAllowList = getAuthRedirectAllowList();
   const providerCallbackUrl = getSupabaseProviderCallbackUrl();
+  const showAuthSetupGuide = shouldShowAuthSetupGuide(isSupabaseConfigured);
 
   if (isAuthenticated) {
     return <Redirect href="/profile" />;
@@ -124,19 +126,23 @@ export default function LoginScreen() {
           <Text style={styles.requiredNotice}>로그인 후에만 약속 카드, 친구, 일정 화면을 사용할 수 있어요.</Text>
         </Card>
 
-        <Card style={styles.setupCard}>
-          <Text style={styles.noticeTitle}>Supabase URL Configuration</Text>
-          <Text style={styles.noticeBody}>Redirect URLs에 아래 값을 추가해야 모바일 로그인이 앱으로 돌아옵니다.</Text>
-          {redirectAllowList.map((url) => (
-            <ConfigValue key={url} label="Allowed Redirect URL" value={url} />
-          ))}
-        </Card>
+        {showAuthSetupGuide ? (
+          <>
+            <Card style={styles.setupCard}>
+              <Text style={styles.noticeTitle}>Supabase URL Configuration</Text>
+              <Text style={styles.noticeBody}>Redirect URLs에 아래 값을 추가해야 모바일 로그인이 앱으로 돌아옵니다.</Text>
+              {redirectAllowList.map((url) => (
+                <ConfigValue key={url} label="Allowed Redirect URL" value={url} />
+              ))}
+            </Card>
 
-        <Card style={styles.setupCard}>
-          <Text style={styles.noticeTitle}>Google / Kakao 개발자 콘솔</Text>
-          <Text style={styles.noticeBody}>OAuth 앱의 redirect URI에는 Supabase provider callback을 넣습니다.</Text>
-          <ConfigValue label="Provider Callback URL" value={providerCallbackUrl ?? 'Supabase URL 설정 필요'} />
-        </Card>
+            <Card style={styles.setupCard}>
+              <Text style={styles.noticeTitle}>Google / Kakao 개발자 콘솔</Text>
+              <Text style={styles.noticeBody}>OAuth 앱의 redirect URI에는 Supabase provider callback을 넣습니다.</Text>
+              <ConfigValue label="Provider Callback URL" value={providerCallbackUrl ?? 'Supabase URL 설정 필요'} />
+            </Card>
+          </>
+        ) : null}
       </AppScreen>
 
       <NoticeModal message={notice} onClose={() => setNotice(null)} />

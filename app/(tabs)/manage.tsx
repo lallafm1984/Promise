@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { AlertTriangle, Link2, Send, UsersRound, X } from 'lucide-react-native';
 import { Modal, Share, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -12,7 +12,9 @@ import { useManagedCards } from '@/hooks/useManagedCards';
 import {
   buildShareMessage,
   canDeleteManagedCard,
+  formatCandidateResponseSummary,
   getManagedStatusGroup,
+  getShareUrlForClipboard,
   type ManagedCardActionKind,
   type ManagedStatusGroup,
 } from '@/lib/cardMenu';
@@ -57,6 +59,7 @@ function getParticipantChoiceBadgeStyle(choice: ResponseChoice) {
 const statusTabs: Array<{ key: ManagedStatusGroup; label: string }> = [
   { key: 'PENDING', label: '응답 대기' },
   { key: 'VOTING', label: '투표 중' },
+  { key: 'DECLINED', label: '응답 거절' },
   { key: 'CONFIRMED', label: '확정됨' },
   { key: 'PAST', label: '지난 약속' },
 ];
@@ -72,6 +75,7 @@ export default function ManageCardsScreen() {
     sendManagedCardToRecipients,
     confirmManagedCard,
     respondToReceivedCard,
+    reload: reloadManagedCards,
   } = useManagedCards();
   const { friends, isLoading: isFriendsLoading } = useFriends();
   const [activeGroup, setActiveGroup] = useState<ManagedStatusGroup>('PENDING');
@@ -91,6 +95,11 @@ export default function ManageCardsScreen() {
   const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
     () => getPreviewFriendOptions(friends),
     [friends],
+  );
+  useFocusEffect(
+    useCallback(() => {
+      void reloadManagedCards();
+    }, [reloadManagedCards]),
   );
   useEffect(() => {
     const routeGroup = Array.isArray(group) ? group[0] : group;
@@ -217,7 +226,7 @@ export default function ManageCardsScreen() {
     setIsReshareActionPending(true);
 
     try {
-      await Clipboard.setStringAsync(reshareCard.sharedUrl);
+      await Clipboard.setStringAsync(getShareUrlForClipboard(reshareCard));
       closeReshareModal();
     } catch {
       setReshareFeedback('링크를 복사하지 못했어요. 다시 시도해 주세요.');
@@ -277,6 +286,15 @@ export default function ManageCardsScreen() {
     }
   }
 
+  function handleCancelResultCard() {
+    if (!resultCard || !canDeleteManagedCard(resultCard, now)) {
+      return;
+    }
+
+    setDeleteConfirmCard(resultCard);
+    setResultCard(null);
+  }
+
   async function handleSubmitResponse() {
     if (!responseCard) {
       return;
@@ -296,7 +314,8 @@ export default function ManageCardsScreen() {
     setIsResponding(true);
 
     try {
-      await respondToReceivedCard(responseCard.id, responses);
+      const respondedCard = await respondToReceivedCard(responseCard.id, responses);
+      setActiveGroup(getManagedStatusGroup(respondedCard, now));
       setResponseCard(null);
     } catch {
       return;
@@ -317,11 +336,14 @@ export default function ManageCardsScreen() {
   const hasAllResponseChoices = responseCard
     ? responseCard.candidates.every((candidate) => Boolean(responseChoices[candidate.id]))
     : false;
+  const resultGroup = resultCard ? getManagedStatusGroup(resultCard, now) : null;
+  const canConfirmResult = resultGroup === 'PENDING' || resultGroup === 'VOTING';
+  const canCancelResult = resultCard ? canDeleteManagedCard(resultCard, now) : false;
   const deleteConfirmation = deleteConfirmCard ? getManagedCardDeleteConfirmation(deleteConfirmCard) : null;
   const routeScrollKey = Array.isArray(scroll) ? scroll[0] : scroll;
 
   return (
-    <AppScreen scrollToTopKey={routeScrollKey}>
+    <AppScreen reserveBottomTabs scrollToTopKey={routeScrollKey}>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -526,7 +548,7 @@ export default function ManageCardsScreen() {
             <Card style={styles.resultModal}>
               <View style={styles.resultHeader}>
                 <View style={styles.resultHeaderCopy}>
-                  <Text style={styles.resultKicker}>투표 결과</Text>
+                  <Text style={styles.resultKicker}>{resultCard.mode === 'DIRECT' ? '응답 결과' : '투표 결과'}</Text>
                   <Text style={styles.resultTitle} numberOfLines={2}>
                     {resultCard.title}
                   </Text>
@@ -545,16 +567,16 @@ export default function ManageCardsScreen() {
                   <View key={candidate.id} style={styles.resultCandidate}>
                     <View style={styles.resultCandidateCopy}>
                       <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
-                      <Text style={styles.resultCandidateMeta}>
-                        가능 {candidate.summary.yes} · 애매 {candidate.summary.maybe} · 어려움 {candidate.summary.no}
-                      </Text>
+                      <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
                     </View>
-                    <ActionButton
-                      label={isConfirming ? '확정 중' : '이 시간 확정'}
-                      variant="primary"
-                      disabled={isConfirming}
-                      onPress={() => void handleConfirmCandidate(resultCard, candidate.id)}
-                    />
+                    {canConfirmResult ? (
+                      <ActionButton
+                        label={isConfirming ? '확정 중' : '이 시간 확정'}
+                        variant="primary"
+                        disabled={isConfirming}
+                        onPress={() => void handleConfirmCandidate(resultCard, candidate.id)}
+                      />
+                    ) : null}
                   </View>
                 ))}
               </View>
@@ -602,6 +624,18 @@ export default function ManageCardsScreen() {
                   <Text style={styles.emptyRespondentText}>아직 응답이 없어요.</Text>
                 )}
               </View>
+
+              {canCancelResult ? (
+                <View style={styles.resultFooterActions}>
+                  <ActionButton
+                    label="카드 취소"
+                    variant="danger"
+                    disabled={isConfirming}
+                    fullWidth
+                    onPress={handleCancelResultCard}
+                  />
+                </View>
+              ) : null}
             </Card>
           ) : null}
         </View>
@@ -632,9 +666,7 @@ export default function ManageCardsScreen() {
                   <View key={candidate.id} style={styles.responseCandidate}>
                     <View style={styles.resultCandidateCopy}>
                       <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
-                      <Text style={styles.resultCandidateMeta}>
-                        가능 {candidate.summary.yes} · 애매 {candidate.summary.maybe} · 어려움 {candidate.summary.no}
-                      </Text>
+                      <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
                     </View>
                     {canRespond ? (
                       <View style={styles.responseChoiceRow}>
@@ -1047,6 +1079,10 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   resultList: {
+    gap: spacing.sm,
+  },
+  resultFooterActions: {
+    flexDirection: 'row',
     gap: spacing.sm,
   },
   respondentPanel: {

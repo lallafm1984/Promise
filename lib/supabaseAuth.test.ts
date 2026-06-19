@@ -81,6 +81,15 @@ describe('supabase auth callbacks', () => {
     expect(getSupabaseProviderCallbackUrl('bad url')).toBeNull();
   });
 
+  it('shows the auth setup guide only when configuration is missing or explicitly enabled', async () => {
+    const { shouldShowAuthSetupGuide } = await import('./supabaseAuth');
+
+    expect(shouldShowAuthSetupGuide(true)).toBe(false);
+    expect(shouldShowAuthSetupGuide(false)).toBe(true);
+    expect(shouldShowAuthSetupGuide(true, 'true')).toBe(true);
+    expect(shouldShowAuthSetupGuide(false, 'false')).toBe(false);
+  });
+
   it('recognizes native, web, and Expo auth callback URLs', async () => {
     const { isAuthCallbackUrl } = await import('./supabaseAuth');
 

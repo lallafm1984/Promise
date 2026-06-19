@@ -1,12 +1,15 @@
-﻿import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { getActivePromiseRepository } from '@/data/promiseRepository';
 import {
   createPromiseDataRefreshChannelName,
   getPromiseDataLoadErrorState,
+  shouldReloadPromiseDataForAppState,
   type PromiseDataState,
 } from '@/lib/promiseDataState';
 import { supabase } from '@/lib/supabase';
+
 const initialState: PromiseDataState = {
   profile: null,
   recentCards: [],
@@ -18,36 +21,37 @@ const initialState: PromiseDataState = {
 
 export function usePromiseData() {
   const [state, setState] = useState<PromiseDataState>(initialState);
+  const isMountedRef = useRef(false);
 
-  useEffect(() => {
-    let isMounted = true;
-    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  const load = useCallback(async () => {
+    try {
+      const { persisted, repository } = await getActivePromiseRepository();
+      const [profile, recentCards, scheduleItems] = await Promise.all([
+        repository.getHostProfile(),
+        repository.listRecentCards(),
+        repository.listScheduleItems(),
+      ]);
 
-    async function load() {
-      try {
-        const { persisted, repository } = await getActivePromiseRepository();
-        const [profile, recentCards, scheduleItems] = await Promise.all([
-          repository.getHostProfile(),
-          repository.listRecentCards(),
-          repository.listScheduleItems(),
-        ]);
-
-        if (isMounted) {
-          setState({
-            profile,
-            recentCards,
-            scheduleItems,
-            isLoading: false,
-            persisted,
-            error: null,
-          });
-        }
-      } catch (error) {
-        if (isMounted) {
-          setState((current) => getPromiseDataLoadErrorState(current, error));
-        }
+      if (isMountedRef.current) {
+        setState({
+          profile,
+          recentCards,
+          scheduleItems,
+          isLoading: false,
+          persisted,
+          error: null,
+        });
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        setState((current) => getPromiseDataLoadErrorState(current, error));
       }
     }
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
     function scheduleLoad() {
       if (reloadTimer) {
@@ -59,7 +63,12 @@ export function usePromiseData() {
       }, 250);
     }
 
-    load();
+    void load();
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (shouldReloadPromiseDataForAppState(nextState)) {
+        scheduleLoad();
+      }
+    });
     const {
       data: { subscription },
     } =
@@ -75,14 +84,18 @@ export function usePromiseData() {
       .subscribe();
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
       if (reloadTimer) {
         clearTimeout(reloadTimer);
       }
+      appStateSubscription.remove();
       subscription?.unsubscribe();
       void dataChangeChannel?.unsubscribe();
     };
-  }, []);
+  }, [load]);
 
-  return state;
+  return {
+    ...state,
+    reload: load,
+  };
 }

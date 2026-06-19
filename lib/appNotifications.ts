@@ -478,6 +478,10 @@ export async function scheduleAppointmentReminders(profile: HostProfile, schedul
 }
 
 export function installNotificationResponseHandler() {
+  if (Platform.OS === 'web') {
+    return () => undefined;
+  }
+
   function redirect(notification: Notifications.Notification) {
     const url = notification.request.content.data?.url;
 

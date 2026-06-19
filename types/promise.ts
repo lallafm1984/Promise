@@ -118,6 +118,8 @@ export interface ReceivedCardAlert {
 export interface SchedulePlannerRepository {
   listManualScheduleItems(): Promise<DisplayScheduleItem[]>;
   createManualScheduleItem(input: CreateManualScheduleInput): Promise<DisplayScheduleItem>;
+  updateManualScheduleItem(scheduleId: string, input: CreateManualScheduleInput): Promise<DisplayScheduleItem>;
+  deleteManualScheduleItem(scheduleId: string): Promise<void>;
   listTodos(): Promise<TodoItem[]>;
   createTodo(input: CreateTodoInput): Promise<TodoItem>;
   toggleTodo(todoId: string): Promise<TodoItem>;
@@ -140,6 +142,7 @@ export interface PromiseRepository {
   listReceivedCardAlerts(): Promise<ReceivedCardAlert[]>;
   createManagedCard(card: PromiseCard): Promise<PromiseCard>;
   sendManagedCardToRecipients(cardId: string, recipientProfileIds: string[]): Promise<PromiseCard>;
+  requestManagedCardChange(card: PromiseCard): Promise<PromiseCard>;
   deleteManagedCard(cardId: string): Promise<void>;
   confirmManagedCard(input: ConfirmCardInput): Promise<PromiseCard>;
   respondToReceivedCard(input: RespondToReceivedCardInput): Promise<PromiseCard>;

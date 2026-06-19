@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CARD_CORE_CHANGE_POLICY,
+  buildCardCancellationMessage,
   mergeManagedCardIntoLocalCards,
   mergeManagedCardsView,
   mergeRecipientProfileIds,
   getDeliveredCardManageGroup,
   getDeliveredCardManagePath,
   getManagedCardDeleteConfirmation,
+  getRecentReceivedCardStatuses,
+  getScheduleCardManageGroup,
+  getScheduleCardManagePath,
   removeManagedCardFromLocalState,
 } from './managedCards';
-import type { PromiseCard } from '@/types/promise';
+import type { PromiseCard, ScheduleItem } from '@/types/promise';
 
 function buildCard(id: string, status: PromiseCard['status'] = 'PENDING'): PromiseCard {
   return {
@@ -27,6 +32,20 @@ function buildCard(id: string, status: PromiseCard['status'] = 'PENDING'): Promi
   };
 }
 
+function buildScheduleItem(startsAt: string): ScheduleItem {
+  return {
+    id: 'schedule-card',
+    cardId: 'card-schedule',
+    title: 'card schedule',
+    startsAt,
+    endsAt: startsAt,
+    dateLabel: '6월 20일',
+    timeLabel: '19:00',
+    location: 'place',
+    status: 'READY',
+  };
+}
+
 describe('managed card local state', () => {
   it('keeps a locally saved preview card first so manage shows it while remote sync is unavailable', () => {
     const previewCard = buildCard('preview-card');
@@ -37,6 +56,16 @@ describe('managed card local state', () => {
 
     expect(managedCards.map((card) => card.id)).toEqual(['preview-card', 'recent-card']);
     expect(managedCards[0].status).toBe('PENDING');
+  });
+
+  it('uses the refreshed server card when a locally created card receives a remote status update', () => {
+    const localPendingCard = buildCard('card-from-share', 'PENDING');
+    const refreshedDeclinedCard = buildCard('card-from-share', 'DECLINED');
+
+    const managedCards = mergeManagedCardsView([localPendingCard], [refreshedDeclinedCard], []);
+
+    expect(managedCards).toEqual([refreshedDeclinedCard]);
+    expect(managedCards[0].status).toBe('DECLINED');
   });
 
   it('replaces an optimistic card with the saved card without leaving duplicates', () => {
@@ -81,11 +110,37 @@ describe('managed card local state', () => {
     );
   });
 
+  it('targets confirmed or past manage tabs from a card schedule item', () => {
+    const now = new Date('2026-06-18T10:00:00.000Z');
+
+    expect(getScheduleCardManageGroup(buildScheduleItem('2026-06-20T10:00:00.000Z'), now)).toBe('CONFIRMED');
+    expect(getScheduleCardManageGroup(buildScheduleItem('2026-06-16T10:00:00.000Z'), now)).toBe('PAST');
+    expect(getScheduleCardManagePath(buildScheduleItem('2026-06-20T10:00:00.000Z'), 'from-schedule', now)).toBe(
+      '/manage?group=CONFIRMED&scroll=from-schedule',
+    );
+  });
+
+  it('keeps declined received cards visible in the manage status tabs after refresh', () => {
+    expect(getRecentReceivedCardStatuses()).toEqual(['PENDING', 'VOTING', 'DECLINED', 'CONFIRMED']);
+  });
+
   it('builds confirmation copy before deleting a managed card', () => {
     expect(getManagedCardDeleteConfirmation(buildCard('dinner-card'))).toEqual({
-      title: '카드 삭제',
-      body: 'dinner-card card 카드를 삭제할까요?',
-      confirmLabel: '삭제',
+      title: '카드 취소',
+      body: 'dinner-card card 카드를 취소하고 관리함에서 제거할까요?',
+      confirmLabel: '취소하기',
     });
+  });
+
+  it('treats time and location as core card changes that require a new share', () => {
+    expect(CARD_CORE_CHANGE_POLICY.title).toContain('시간');
+    expect(CARD_CORE_CHANGE_POLICY.title).toContain('장소');
+    expect(CARD_CORE_CHANGE_POLICY.body).toContain('다시 공유');
+  });
+
+  it('builds a concise cancellation share message for card schedules', () => {
+    expect(buildCardCancellationMessage(buildScheduleItem('2026-06-20T10:00:00.000Z'))).toBe(
+      ['card schedule 일정이 취소 되었어요.', '', '언제: 6월 20일 19:00', '어디서: place'].join('\n'),
+    );
   });
 });

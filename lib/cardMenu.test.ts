@@ -11,6 +11,7 @@ import {
   createDefaultCardDraft,
   createDefaultDraftTimes,
   ensureDraftTimeCount,
+  formatCandidateResponseSummary,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
   getCandidateEndsAt,
@@ -19,6 +20,8 @@ import {
   getManagedStatusGroup,
   getModeLabel,
   getRecipientProfileIds,
+  getShareUrlForClipboard,
+  getShareUrlForMessage,
   mergeManagedCards,
   mergeDraftDatePart,
   mergeDraftTimePart,
@@ -164,7 +167,11 @@ describe('card menu helpers', () => {
     expect(getCandidateEndsAt(june14At1930)).toBe(localIso(6, 14, 20, 30));
   });
 
-  it('groups managed cards by status and moves old confirmed cards to past appointments', () => {
+  it('formats candidate response summaries without the removed maybe option', () => {
+    expect(formatCandidateResponseSummary({ yes: 2, maybe: 4, no: 1, unanswered: 0 })).toBe('가능 2 · 어려움 1');
+  });
+
+  it('groups managed cards by status and keeps declined cards separate from past appointments', () => {
     expect(getManagedStatusGroup({ ...baseCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(
       'PENDING',
     );
@@ -193,13 +200,27 @@ describe('card menu helpers', () => {
         },
         new Date('2026-06-12T12:00:00+09:00'),
       ),
-    ).toBe('PAST');
+    ).toBe('DECLINED');
   });
 
   it('returns exactly one representative action per managed status group', () => {
     expect(getManagedCardAction({ ...baseCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
       kind: 'RESHARE',
       label: '공유 다시하기',
+    });
+    expect(
+      getManagedCardAction(
+        {
+          ...baseCard,
+          status: 'PENDING',
+          participants: [{ id: 'respondent-1', name: '민', displayName: '민지', color: '#FFD6E7', choice: 'YES' }],
+          candidates: [{ ...baseCard.candidates[0], summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 } }],
+        },
+        new Date('2026-06-12T12:00:00+09:00'),
+      ),
+    ).toEqual({
+      kind: 'RESULTS',
+      label: '결과 보기',
     });
     expect(getManagedCardAction({ ...baseCard, status: 'VOTING' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
       kind: 'RESULTS',
@@ -208,6 +229,24 @@ describe('card menu helpers', () => {
     expect(getManagedCardAction({ ...baseCard, status: 'CONFIRMED' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
       kind: 'SCHEDULE',
       label: '일정 보기',
+    });
+    expect(getManagedCardAction({ ...baseCard, status: 'DECLINED' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
+      kind: 'RECREATE',
+      label: '다시 만들기',
+    });
+    expect(
+      getManagedCardAction(
+        {
+          ...baseCard,
+          status: 'DECLINED',
+          participants: [{ id: 'respondent-1', name: '민', displayName: '민지', color: '#FFD6E7', choice: 'NO' }],
+          candidates: [{ ...baseCard.candidates[0], summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 } }],
+        },
+        new Date('2026-06-12T12:00:00+09:00'),
+      ),
+    ).toEqual({
+      kind: 'RESULTS',
+      label: '결과 보기',
     });
     expect(
       getManagedCardAction(
@@ -257,7 +296,7 @@ describe('card menu helpers', () => {
     });
   });
 
-  it('allows deleting managed cards in every manage status group', () => {
+  it('allows deleting only active unconfirmed managed cards from manage', () => {
     const pastOwnerCard: PromiseCard = {
       ...baseCard,
       status: 'CONFIRMED',
@@ -268,11 +307,12 @@ describe('card menu helpers', () => {
       requesterName: '하린',
     };
 
-    expect(canDeleteManagedCard(pastOwnerCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
+    expect(canDeleteManagedCard(pastOwnerCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
     expect(canDeleteManagedCard({ ...baseCard, status: 'PENDING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
     expect(canDeleteManagedCard({ ...baseCard, status: 'VOTING' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
-    expect(canDeleteManagedCard({ ...baseCard, status: 'CONFIRMED' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
-    expect(canDeleteManagedCard(pastReceivedCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(true);
+    expect(canDeleteManagedCard({ ...baseCard, status: 'DECLINED' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
+    expect(canDeleteManagedCard({ ...baseCard, status: 'CONFIRMED' }, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
+    expect(canDeleteManagedCard(pastReceivedCard, new Date('2026-06-12T12:00:00+09:00'))).toBe(false);
   });
 
   it('merges owned and received managed cards without duplicating owned cards', () => {
@@ -382,12 +422,11 @@ describe('card menu helpers', () => {
   it('builds a concise share message that points invitees to the response link', () => {
     expect(buildShareMessage(baseCard)).toBe(
       [
-        '언제볼래? 약속 초대가 왔어요.',
+        '언제볼래? 약속 초대가 왔어요',
         '6월 14일 19:30 · 성수 카페',
         '한마디: 가볍게 한 시간만 보자',
-        '',
-        '아래 링크에서 가능 여부를 알려줘.',
-        'https://whenbollae.app/c/card-test',
+        '가능 여부 알려줘',
+        'whenbollae.app/c/card-test',
       ].join('\n'),
     );
 
@@ -410,24 +449,32 @@ describe('card menu helpers', () => {
       }),
     ).toBe(
       [
-        '언제볼래? 약속 초대가 왔어요.',
+        '언제볼래? 약속 초대가 왔어요',
         '6월 14일 19:30 / 6월 15일 20:00 · 성수 카페',
         '한마디: 가볍게 한 시간만 보자',
-        '',
-        '아래 링크에서 가능 여부를 알려줘.',
-        'https://whenbollae.app/c/card-test',
+        '가능 여부 알려줘',
+        'whenbollae.app/c/card-test',
       ].join('\n'),
     );
 
     expect(buildShareMessage({ ...baseCard, message: '' })).toBe(
       [
-        '언제볼래? 약속 초대가 왔어요.',
+        '언제볼래? 약속 초대가 왔어요',
         '6월 14일 19:30 · 성수 카페',
-        '',
-        '아래 링크에서 가능 여부를 알려줘.',
-        'https://whenbollae.app/c/card-test',
+        '가능 여부 알려줘',
+        'whenbollae.app/c/card-test',
       ].join('\n'),
     );
+  });
+
+  it('uses a shorter display URL in Kakao share messages', () => {
+    expect(getShareUrlForMessage(baseCard)).toBe('whenbollae.app/c/card-test');
+  });
+
+  it('returns only the public URL for clipboard link sharing', () => {
+    expect(getShareUrlForClipboard(baseCard)).toBe('https://whenbollae.app/c/card-test');
+    expect(getShareUrlForClipboard(baseCard)).not.toContain('언제볼래?');
+    expect(getShareUrlForClipboard(baseCard)).not.toContain('한마디');
   });
 
   it('maps selected app friends to unique recipient profile ids', () => {
@@ -468,5 +515,34 @@ describe('card menu helpers', () => {
       selectedSlotId: 'slot-2',
     });
     expect(buildConfirmedCard(pollCard, 'missing-slot')).toEqual(pollCard);
+  });
+
+  it('keeps direct responses as participant state until the creator confirms', () => {
+    expect(
+      applyReceivedCardResponse(baseCard, {
+        respondentId: 'respondent-1',
+        respondentName: '민지',
+        respondentComment: '가능해요',
+        responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+      }),
+    ).toEqual({
+      ...baseCard,
+      participants: [
+        {
+          id: 'respondent-1',
+          name: '민',
+          displayName: '민지',
+          comment: '가능해요',
+          color: '#FFD6E7',
+          choice: 'YES',
+        },
+      ],
+      candidates: [
+        {
+          ...baseCard.candidates[0],
+          summary: { yes: 1, maybe: 0, no: 0, unanswered: 1 },
+        },
+      ],
+    });
   });
 });

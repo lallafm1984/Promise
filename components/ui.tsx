@@ -15,10 +15,9 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { palette, radius, shadow, spacing } from '@/constants/theme';
+import { getAppScreenBottomPadding, getNativeBottomInset } from '@/lib/layoutInsets';
 import { getStorageModeCopy, type StorageModeSurface } from '@/lib/storageMode';
 import type { AppointmentStatus, Participant, ResponseChoice } from '@/types/promise';
-
-const MIN_NATIVE_BOTTOM_INSET = 16;
 
 type ButtonVariant = 'primary' | 'secondary' | 'kakao' | 'danger' | 'ghost';
 
@@ -27,6 +26,7 @@ interface AppScreenProps {
   contentStyle?: StyleProp<ViewStyle>;
   keyboardAware?: boolean;
   resetScrollOnFocus?: boolean;
+  reserveBottomTabs?: boolean;
   scrollRef?: RefObject<ScrollView | null>;
   scrollToTopKey?: string | number | boolean | null;
 }
@@ -56,6 +56,7 @@ export function AppScreen({
   contentStyle,
   keyboardAware,
   resetScrollOnFocus = true,
+  reserveBottomTabs = false,
   scrollRef,
   scrollToTopKey,
 }: AppScreenProps) {
@@ -64,8 +65,11 @@ export function AppScreen({
   const internalScrollRef = useRef<ScrollView>(null);
   const activeScrollRef = scrollRef ?? internalScrollRef;
   const contentWidth = Platform.OS === 'web' ? Math.min(width, 350) : Math.min(width, 430);
-  const bottomInset = Platform.OS === 'web' ? 0 : Math.max(insets.bottom, MIN_NATIVE_BOTTOM_INSET);
-  const bottomPadding = bottomInset + spacing.xl;
+  const bottomInset = Platform.OS === 'web' ? 0 : getNativeBottomInset(insets.bottom);
+  const bottomPadding = getAppScreenBottomPadding({
+    bottomInset,
+    reserveBottomTabs: Platform.OS !== 'web' && reserveBottomTabs,
+  });
 
   const scrollToTop = useCallback(
     (animated = false) => {
@@ -203,7 +207,7 @@ export function StatusBadge({ status }: { status: AppointmentStatus }) {
     PENDING: { label: '응답 대기', tone: 'amber' },
     VOTING: { label: '투표 진행 중', tone: 'primary' },
     CONFIRMED: { label: '확정', tone: 'mint' },
-    DECLINED: { label: '반려됨', tone: 'coral' },
+    DECLINED: { label: '응답 거절', tone: 'coral' },
   };
 
   return <Chip label={statusMap[status].label} tone={statusMap[status].tone} />;

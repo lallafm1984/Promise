@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  Alert,
   Animated,
   Easing,
   LayoutAnimation,
@@ -7,6 +8,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -23,16 +25,25 @@ import {
   ListChecks,
   MapPin,
   MessageCircle,
+  Pencil,
   Plus,
+  Trash2,
   X,
 } from 'lucide-react-native';
 
 import { CandidateTimeFields } from '@/components/card-menu';
 import { AppScreen, Card, Chip, SectionHeader } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
+import { useManagedCards } from '@/hooks/useManagedCards';
 import { usePromiseData } from '@/hooks/usePromiseData';
 import { useSchedulePlanner } from '@/hooks/useSchedulePlanner';
-import { getCandidateEndsAt } from '@/lib/cardMenu';
+import {
+  buildShareMessage,
+  formatDraftDateTimeLabel,
+  formatDraftDateTimeShortLabel,
+  getCandidateEndsAt,
+} from '@/lib/cardMenu';
+import { buildCardCancellationMessage } from '@/lib/managedCards';
 import {
   compareScheduleItems,
   formatMonthTitle,
@@ -44,7 +55,7 @@ import {
   startOfDay,
   toDateKey,
 } from '@/lib/scheduleCalendar';
-import type { DisplayScheduleItem, ScheduleColorKey, TodoItem } from '@/types/promise';
+import type { DisplayScheduleItem, PromiseCard, ScheduleColorKey, TodoItem } from '@/types/promise';
 
 type ScheduleMode = 'SCHEDULE' | 'TODO';
 type ScheduleParticipant = NonNullable<DisplayScheduleItem['participants']>[number];
@@ -95,6 +106,7 @@ if (Platform.OS === 'android') {
 
 export default function ScheduleScreen() {
   const { scheduleItems } = usePromiseData();
+  const { managedCards, requestManagedCardChange, removeManagedCard } = useManagedCards();
   const {
     manualScheduleItems,
     todos,
@@ -102,12 +114,18 @@ export default function ScheduleScreen() {
     isMutating,
     error: plannerError,
     createManualScheduleItem,
+    updateManualScheduleItem,
+    deleteManualScheduleItem,
     createTodo,
     toggleTodo: saveTodoToggle,
   } = useSchedulePlanner();
   const [activeMode, setActiveMode] = useState<ScheduleMode>('SCHEDULE');
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
   const [composerMode, setComposerMode] = useState<ScheduleMode | null>(null);
+  const [editingScheduleItem, setEditingScheduleItem] = useState<DisplayScheduleItem | null>(null);
+  const [editingCardScheduleItem, setEditingCardScheduleItem] = useState<DisplayScheduleItem | null>(null);
+  const [cardActionItem, setCardActionItem] = useState<DisplayScheduleItem | null>(null);
+  const [isCardActionPending, setIsCardActionPending] = useState(false);
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
   const [scheduleLocation, setScheduleLocation] = useState('');
@@ -162,6 +180,7 @@ export default function ScheduleScreen() {
         .sort((left, right) => Number(left.done) - Number(right.done)),
     [selectedDateKey, todos],
   );
+  const isScheduleMutating = isMutating || isCardActionPending;
   const openTodoCount = selectedTodos.filter((todo) => !todo.done).length;
   const weekPanResponder = useMemo(
     () =>
@@ -291,6 +310,8 @@ export default function ScheduleScreen() {
   }
 
   function openScheduleComposer() {
+    setEditingScheduleItem(null);
+    setEditingCardScheduleItem(null);
     setScheduleTitle('');
     setScheduleTime(createScheduleTimeForDate(selectedDate));
     setScheduleLocation('');
@@ -298,31 +319,212 @@ export default function ScheduleScreen() {
     setComposerMode('SCHEDULE');
   }
 
+  function openScheduleEditor(item: DisplayScheduleItem) {
+    if (item.source !== 'MANUAL') {
+      return;
+    }
+
+    setEditingScheduleItem(item);
+    setEditingCardScheduleItem(null);
+    setScheduleTitle(item.title);
+    setScheduleTime(item.startsAt || createScheduleTimeForDate(selectedDate));
+    setScheduleLocation(item.location);
+    setScheduleColor(item.colorKey ?? 'sky');
+    setComposerMode('SCHEDULE');
+  }
+
+  function openCardActions(item: DisplayScheduleItem) {
+    if (item.source !== 'CARD') {
+      return;
+    }
+
+    setCardActionItem(item);
+  }
+
+  function closeCardActions() {
+    if (isCardActionPending) {
+      return;
+    }
+
+    setCardActionItem(null);
+  }
+
+  function openCardScheduleEditor(item: DisplayScheduleItem) {
+    setCardActionItem(null);
+    setEditingScheduleItem(null);
+    setEditingCardScheduleItem(item);
+    setScheduleTitle(item.title);
+    setScheduleTime(item.startsAt || createScheduleTimeForDate(selectedDate));
+    setScheduleLocation(item.location);
+    setScheduleColor('lime');
+    setComposerMode('SCHEDULE');
+  }
+
+  function closeComposer() {
+    setComposerMode(null);
+    setEditingScheduleItem(null);
+    setEditingCardScheduleItem(null);
+  }
+
+  function findManagedCardForSchedule(item: DisplayScheduleItem) {
+    return managedCards.find((card) => card.id === item.cardId);
+  }
+
+  function buildCardChangeRequest(item: DisplayScheduleItem, card: PromiseCard): PromiseCard {
+    const startsAt = scheduleTime || item.startsAt || createScheduleTimeForDate(selectedDate);
+    const location = scheduleLocation.trim() || '장소 미정';
+    const candidateId = `${card.id}-change-slot-${Date.now()}`;
+    const label = formatDraftDateTimeLabel(startsAt);
+
+    return {
+      ...card,
+      mode: 'DIRECT',
+      status: 'PENDING',
+      title: `${label}에 ${location}에서 볼래?`,
+      location,
+      selectedSlotId: candidateId,
+      candidates: [
+        {
+          id: candidateId,
+          startsAt,
+          endsAt: getCandidateEndsAt(startsAt),
+          label,
+          shortLabel: formatDraftDateTimeShortLabel(startsAt),
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+        },
+      ],
+      participants: [],
+    };
+  }
+
   async function submitScheduleItem() {
     const title = scheduleTitle.trim();
 
-    if (title.length === 0) {
+    if (!editingCardScheduleItem && title.length === 0) {
       return;
     }
 
     const startsAt = scheduleTime || createScheduleTimeForDate(selectedDate);
 
     try {
-      await createManualScheduleItem({
+      const input = {
         title,
         location: scheduleLocation.trim() || '장소 미정',
         startsAt,
         endsAt: getCandidateEndsAt(startsAt),
         colorKey: scheduleColor,
-      });
-      setComposerMode(null);
+      };
+
+      if (editingCardScheduleItem) {
+        const card = findManagedCardForSchedule(editingCardScheduleItem);
+
+        if (!card) {
+          Alert.alert('카드를 찾지 못했어요', '잠시 후 다시 시도해 주세요.');
+          return;
+        }
+
+        setIsCardActionPending(true);
+        const result = await requestManagedCardChange(buildCardChangeRequest(editingCardScheduleItem, card));
+
+        if (result.saveFailed) {
+          Alert.alert('카드를 저장하지 못했어요', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.');
+          return;
+        }
+
+        const shareResult = await Share.share({
+          message: buildShareMessage(result.card),
+          url: result.card.sharedUrl,
+        });
+
+        if (shareResult.action !== Share.dismissedAction) {
+          closeComposer();
+        }
+      } else if (editingScheduleItem) {
+        await updateManualScheduleItem(editingScheduleItem.id, input);
+        closeComposer();
+      } else {
+        await createManualScheduleItem(input);
+        closeComposer();
+      }
+
       runMotionFeedback(contentMotion);
     } catch {
       runMotionFeedback(contentMotion);
+    } finally {
+      setIsCardActionPending(false);
     }
   }
 
+  async function shareAndDeleteCardSchedule(item: DisplayScheduleItem) {
+    setIsCardActionPending(true);
+
+    try {
+      const shareResult = await Share.share({
+        message: buildCardCancellationMessage(item),
+      });
+
+      if (shareResult.action === Share.dismissedAction) {
+        return;
+      }
+
+      const result = await removeManagedCard(item.cardId);
+
+      if (result.deleteFailed) {
+        Alert.alert('일정을 삭제하지 못했어요', '네트워크 연결을 확인한 뒤 다시 시도해 주세요.');
+        return;
+      }
+
+      setCardActionItem(null);
+      runMotionFeedback(contentMotion);
+    } catch {
+      Alert.alert('일정을 삭제하지 못했어요', '잠시 후 다시 시도해 주세요.');
+      runMotionFeedback(contentMotion);
+    } finally {
+      setIsCardActionPending(false);
+    }
+  }
+
+  function requestDeleteCardSchedule(item: DisplayScheduleItem) {
+    Alert.alert('일정 삭제하기', `"${item.title}" 일정을 취소하고 상대방에게 공유할까요?`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '공유하고 삭제',
+        style: 'destructive',
+        onPress: () => {
+          void shareAndDeleteCardSchedule(item);
+        },
+      },
+    ]);
+  }
+
+  function requestDeleteEditingScheduleItem() {
+    const item = editingScheduleItem;
+
+    if (!item) {
+      return;
+    }
+
+    Alert.alert('일정 삭제', `"${item.title}" 일정을 삭제할까요?`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제',
+        style: 'destructive',
+        onPress: () => {
+          void deleteManualScheduleItem(item.id)
+            .then(() => {
+              closeComposer();
+              runMotionFeedback(contentMotion);
+            })
+            .catch(() => {
+              runMotionFeedback(contentMotion);
+            });
+        },
+      },
+    ]);
+  }
+
   function openTodoComposer() {
+    setEditingScheduleItem(null);
     setTodoTitle('');
     setTodoDetail('');
     setTodoColor('coral');
@@ -393,7 +595,7 @@ export default function ScheduleScreen() {
 
   return (
     <>
-      <AppScreen>
+      <AppScreen reserveBottomTabs>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -516,7 +718,13 @@ export default function ScheduleScreen() {
         {plannerLoading ? <Text style={styles.syncText}>일정 동기화 중...</Text> : null}
         {plannerError ? <Text style={styles.errorText}>{plannerError}</Text> : null}
         {activeMode === 'SCHEDULE' ? (
-          <SchedulePanel selectedDate={selectedDate} selectedItems={selectedItems} onAdd={openScheduleComposer} />
+          <SchedulePanel
+            selectedDate={selectedDate}
+            selectedItems={selectedItems}
+            onAdd={openScheduleComposer}
+            onEdit={openScheduleEditor}
+            onManageCard={openCardActions}
+          />
         ) : (
           <TodoPanel
             openCount={openTodoCount}
@@ -535,7 +743,9 @@ export default function ScheduleScreen() {
         scheduleLocation={scheduleLocation}
         scheduleTime={scheduleTime}
         scheduleTitle={scheduleTitle}
-        isSubmitting={isMutating}
+        isEditingSchedule={editingScheduleItem !== null}
+        isEditingCardSchedule={editingCardScheduleItem !== null}
+        isSubmitting={isScheduleMutating}
         selectedDate={selectedDate}
         todoColor={todoColor}
         todoDetail={todoDetail}
@@ -547,9 +757,17 @@ export default function ScheduleScreen() {
         onChangeTodoColor={setTodoColor}
         onChangeTodoDetail={setTodoDetail}
         onChangeTodoTitle={setTodoTitle}
-        onClose={() => setComposerMode(null)}
+        onClose={closeComposer}
+        onDeleteSchedule={requestDeleteEditingScheduleItem}
         onSubmitSchedule={submitScheduleItem}
         onSubmitTodo={submitTodoItem}
+      />
+      <CardScheduleActionModal
+        item={cardActionItem}
+        isPending={isCardActionPending}
+        onClose={closeCardActions}
+        onDelete={requestDeleteCardSchedule}
+        onEdit={openCardScheduleEditor}
       />
     </>
   );
@@ -656,10 +874,14 @@ function SchedulePanel({
   selectedDate,
   selectedItems,
   onAdd,
+  onEdit,
+  onManageCard,
 }: {
   selectedDate: Date;
   selectedItems: DisplayScheduleItem[];
   onAdd: () => void;
+  onEdit: (item: DisplayScheduleItem) => void;
+  onManageCard: (item: DisplayScheduleItem) => void;
 }) {
   return (
     <>
@@ -667,7 +889,7 @@ function SchedulePanel({
       {selectedItems.length > 0 ? (
         <View style={styles.list}>
           {selectedItems.map((item) => (
-            <ScheduleItemCard key={item.id} item={item} />
+            <ScheduleItemCard key={item.id} item={item} onEdit={onEdit} onManageCard={onManageCard} />
           ))}
         </View>
       ) : (
@@ -689,21 +911,33 @@ function SchedulePanel({
   );
 }
 
-function ScheduleItemCard({ item }: { item: DisplayScheduleItem }) {
+function ScheduleItemCard({
+  item,
+  onEdit,
+  onManageCard,
+}: {
+  item: DisplayScheduleItem;
+  onEdit: (item: DisplayScheduleItem) => void;
+  onManageCard: (item: DisplayScheduleItem) => void;
+}) {
   if (item.source === 'CARD') {
     const participants = item.participants ?? [];
 
     return (
       <Card style={styles.cardScheduleCard}>
-        <View style={styles.cardScheduleDateBlock}>
-          <Text style={styles.cardScheduleDateMonth}>{item.dateLabel.split(' ')[0]}</Text>
-          <Text style={styles.cardScheduleDateDay}>{item.dateLabel.split(' ')[1]}</Text>
-        </View>
         <View style={styles.manualScheduleBody}>
           <View style={styles.manualScheduleTop}>
             <Text style={styles.manualScheduleTitle} numberOfLines={2}>
               {item.title}
             </Text>
+            <Pressable
+              accessibilityLabel={`${item.title} 카드 일정 관리`}
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => onManageCard(item)}
+              style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
+              <Pencil size={15} color={palette.primaryDeep} />
+            </Pressable>
             <Chip label="카드 생성" tone="lime" />
           </View>
           <View style={styles.cardScheduleInfoRow}>
@@ -764,6 +998,14 @@ function ScheduleItemCard({ item }: { item: DisplayScheduleItem }) {
           <Text style={styles.manualScheduleTitle} numberOfLines={2}>
             {item.title}
           </Text>
+          <Pressable
+            accessibilityLabel={`${item.title} 일정 편집`}
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => onEdit(item)}
+            style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
+            <Pencil size={15} color={palette.primaryDeep} />
+          </Pressable>
           <Chip label="직접 추가" tone="sky" />
         </View>
         <View style={styles.manualInfoRow}>
@@ -846,12 +1088,83 @@ function TodoRow({ todo, onToggle }: { todo: TodoItem; onToggle: () => void }) {
   );
 }
 
+function CardScheduleActionModal({
+  item,
+  isPending,
+  onClose,
+  onDelete,
+  onEdit,
+}: {
+  item: DisplayScheduleItem | null;
+  isPending: boolean;
+  onClose: () => void;
+  onDelete: (item: DisplayScheduleItem) => void;
+  onEdit: (item: DisplayScheduleItem) => void;
+}) {
+  return (
+    <Modal animationType="fade" onRequestClose={onClose} transparent visible={item !== null}>
+      <View style={styles.modalBackdrop}>
+        {item ? (
+          <View style={styles.modalPanel}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleGroup}>
+                <Text style={styles.modalKicker}>{item.dateLabel}</Text>
+                <Text style={styles.modalTitle} numberOfLines={2}>
+                  카드 일정 관리
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="카드 일정 관리 닫기"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
+            </View>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isPending }}
+              disabled={isPending}
+              onPress={() => onEdit(item)}
+              style={({ pressed }) => [
+                styles.modalActionButton,
+                isPending && styles.disabledSubmitButton,
+                pressed && !isPending && styles.pressed,
+              ]}>
+              <Pencil size={16} color={isPending ? palette.inkSoft : palette.onLight} />
+              <Text style={[styles.modalSubmitText, isPending && styles.disabledSubmitText]}>편집하고 공유하기</Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isPending }}
+              disabled={isPending}
+              onPress={() => onDelete(item)}
+              style={({ pressed }) => [
+                styles.modalDeleteButton,
+                isPending && styles.disabledSubmitButton,
+                pressed && !isPending && styles.pressed,
+              ]}>
+              <Trash2 size={16} color={isPending ? palette.inkSoft : palette.primaryDeep} />
+              <Text style={[styles.modalDeleteText, isPending && styles.disabledSubmitText]}>일정 삭제하기</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+    </Modal>
+  );
+}
+
 function ComposerModal({
   mode,
   scheduleColor,
   scheduleLocation,
   scheduleTime,
   scheduleTitle,
+  isEditingSchedule,
+  isEditingCardSchedule,
   isSubmitting,
   selectedDate,
   todoColor,
@@ -865,6 +1178,7 @@ function ComposerModal({
   onChangeTodoDetail,
   onChangeTodoTitle,
   onClose,
+  onDeleteSchedule,
   onSubmitSchedule,
   onSubmitTodo,
 }: {
@@ -873,6 +1187,8 @@ function ComposerModal({
   scheduleLocation: string;
   scheduleTime: string;
   scheduleTitle: string;
+  isEditingSchedule: boolean;
+  isEditingCardSchedule: boolean;
   isSubmitting: boolean;
   selectedDate: Date;
   todoColor: ScheduleColorKey;
@@ -886,12 +1202,21 @@ function ComposerModal({
   onChangeTodoDetail: (value: string) => void;
   onChangeTodoTitle: (value: string) => void;
   onClose: () => void;
+  onDeleteSchedule: () => void;
   onSubmitSchedule: () => void;
   onSubmitTodo: () => void;
 }) {
   const isSchedule = mode === 'SCHEDULE';
   const title = isSchedule ? '일정 추가' : '할일 추가';
-  const disabled = isSubmitting || (isSchedule ? scheduleTitle.trim().length === 0 : todoTitle.trim().length === 0);
+  const disabled =
+    isSubmitting ||
+    (isSchedule
+      ? isEditingCardSchedule
+        ? scheduleLocation.trim().length === 0
+        : scheduleTitle.trim().length === 0
+      : todoTitle.trim().length === 0);
+  const modalTitle = isEditingCardSchedule ? '카드 일정 편집' : isSchedule && isEditingSchedule ? '일정 편집' : title;
+  const submitLabel = isEditingCardSchedule ? '공유하기' : isSchedule && isEditingSchedule ? '수정 저장' : title;
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={mode !== null}>
@@ -900,10 +1225,10 @@ function ComposerModal({
           <View style={styles.modalHeader}>
             <View style={styles.modalTitleGroup}>
               <Text style={styles.modalKicker}>{formatSelectedDate(selectedDate)}</Text>
-              <Text style={styles.modalTitle}>{title}</Text>
+              <Text style={styles.modalTitle}>{modalTitle}</Text>
             </View>
             <Pressable
-              accessibilityLabel={`${title} 닫기`}
+              accessibilityLabel={`${modalTitle} 닫기`}
               accessibilityRole="button"
               hitSlop={8}
               onPress={onClose}
@@ -914,12 +1239,14 @@ function ComposerModal({
 
           {isSchedule ? (
             <View style={styles.modalForm}>
-              <ModalInput
-                label="일정 이름"
-                placeholder="예: 저녁 약속"
-                value={scheduleTitle}
-                onChangeText={onChangeScheduleTitle}
-              />
+              {!isEditingCardSchedule ? (
+                <ModalInput
+                  label="일정 이름"
+                  placeholder="예: 저녁 약속"
+                  value={scheduleTitle}
+                  onChangeText={onChangeScheduleTitle}
+                />
+              ) : null}
               <CandidateTimeFields
                 mode="DIRECT"
                 times={[scheduleTime || createScheduleTimeForDate(selectedDate)]}
@@ -933,11 +1260,13 @@ function ComposerModal({
                 value={scheduleLocation}
                 onChangeText={onChangeScheduleLocation}
               />
-              <ColorPicker
-                label="카드 색상"
-                value={scheduleColor}
-                onChange={onChangeScheduleColor}
-              />
+              {!isEditingCardSchedule ? (
+                <ColorPicker
+                  label="카드 색상"
+                  value={scheduleColor}
+                  onChange={onChangeScheduleColor}
+                />
+              ) : null}
             </View>
           ) : (
             <View style={styles.modalForm}>
@@ -961,6 +1290,22 @@ function ComposerModal({
             </View>
           )}
 
+          {isSchedule && isEditingSchedule && !isEditingCardSchedule ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isSubmitting }}
+              disabled={isSubmitting}
+              onPress={onDeleteSchedule}
+              style={({ pressed }) => [
+                styles.modalDeleteButton,
+                isSubmitting && styles.disabledSubmitButton,
+                pressed && !isSubmitting && styles.pressed,
+              ]}>
+              <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
+              <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>일정 삭제</Text>
+            </Pressable>
+          ) : null}
+
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ disabled }}
@@ -972,7 +1317,7 @@ function ComposerModal({
               pressed && !disabled && styles.pressed,
             ]}>
             <Text style={[styles.modalSubmitText, disabled && styles.disabledSubmitText]}>
-              {isSubmitting ? '저장 중' : '등록'}
+              {isSubmitting ? '저장 중' : submitLabel}
             </Text>
           </Pressable>
         </View>
@@ -1402,25 +1747,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
   },
-  cardScheduleDateBlock: {
-    alignItems: 'center',
-    backgroundColor: palette.lime,
-    borderColor: palette.lineStrong,
-    borderRadius: radius.md,
-    borderWidth: 2,
-    minWidth: 64,
-    padding: spacing.sm,
-  },
-  cardScheduleDateMonth: {
-    color: palette.onLight,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  cardScheduleDateDay: {
-    color: palette.onLight,
-    fontSize: 24,
-    fontWeight: '900',
-  },
   cardScheduleInfoRow: {
     alignItems: 'center',
     backgroundColor: palette.surface,
@@ -1535,6 +1861,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
     lineHeight: 21,
+  },
+  iconActionButton: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
   },
   manualInfoRow: {
     alignItems: 'center',
@@ -1788,12 +2124,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 46,
   },
+  modalActionButton: {
+    alignItems: 'center',
+    backgroundColor: palette.primary,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    minHeight: 46,
+  },
+  modalDeleteButton: {
+    alignItems: 'center',
+    backgroundColor: palette.coralSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    minHeight: 44,
+  },
   disabledSubmitButton: {
     backgroundColor: palette.paper,
     borderColor: palette.line,
   },
   modalSubmitText: {
     color: palette.onLight,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  modalDeleteText: {
+    color: palette.primaryDeep,
     fontSize: 15,
     fontWeight: '900',
   },

@@ -88,6 +88,32 @@ export const mockScheduleRepository: SchedulePlannerRepository = {
     manualScheduleItems = [item, ...manualScheduleItems];
     return item;
   },
+  async updateManualScheduleItem(scheduleId, input) {
+    const item = mapManualSchedule(input, scheduleId);
+    let updated = false;
+    manualScheduleItems = manualScheduleItems.map((currentItem) => {
+      if (currentItem.id !== scheduleId) {
+        return currentItem;
+      }
+
+      updated = true;
+      return item;
+    });
+
+    if (!updated) {
+      throw new Error('일정을 찾지 못했어요.');
+    }
+
+    return item;
+  },
+  async deleteManualScheduleItem(scheduleId) {
+    const previousLength = manualScheduleItems.length;
+    manualScheduleItems = manualScheduleItems.filter((item) => item.id !== scheduleId);
+
+    if (manualScheduleItems.length === previousLength) {
+      throw new Error('일정을 찾지 못했어요.');
+    }
+  },
   async listTodos() {
     return todos;
   },

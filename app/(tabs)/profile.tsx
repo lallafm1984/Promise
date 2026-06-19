@@ -169,7 +169,7 @@ export default function ProfileScreen() {
 
   return (
     <>
-      <AppScreen>
+      <AppScreen reserveBottomTabs>
         <View style={styles.header}>
           <View style={styles.headerShapePrimary} />
           <View style={styles.headerShapeMint} />

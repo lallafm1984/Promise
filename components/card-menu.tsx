@@ -72,6 +72,7 @@ interface ActivePicker {
 const statusGroups: Array<{ key: ManagedStatusGroup; title: string }> = [
   { key: 'PENDING', title: '\uC751\uB2F5 \uB300\uAE30' },
   { key: 'VOTING', title: '\uD22C\uD45C \uC911' },
+  { key: 'DECLINED', title: '\uC751\uB2F5 \uAC70\uC808' },
   { key: 'CONFIRMED', title: '\uD655\uC815\uB428' },
   { key: 'PAST', title: '\uC9C0\uB09C \uC57D\uC18D' },
 ];

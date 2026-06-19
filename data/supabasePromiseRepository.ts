@@ -13,6 +13,7 @@ import {
   getCandidateEndsAt,
   mergeManagedCards,
 } from '@/lib/cardMenu';
+import { getRecentReceivedCardStatuses } from '@/lib/managedCards';
 import { supabase } from '@/lib/supabase';
 import type {
   AppointmentMode,
@@ -82,6 +83,8 @@ interface AppointmentIdRow {
 interface CardRecipientRow {
   card_id: string;
 }
+
+type SupabaseClient = ReturnType<typeof assertSupabase>;
 
 export async function isSupabasePromiseRepositoryAvailable() {
   if (!supabase) {
@@ -422,7 +425,7 @@ export const supabasePromiseRepository: PromiseRepository = {
   async listRecentCards() {
     const [ownedCards, receivedCards] = await Promise.all([
       listCardsByOwner(),
-      listCardsByRecipient(['PENDING', 'VOTING', 'CONFIRMED']),
+      listCardsByRecipient(getRecentReceivedCardStatuses()),
     ]);
     return mergeManagedCards(ownedCards, receivedCards);
   },
@@ -599,10 +602,131 @@ export const supabasePromiseRepository: PromiseRepository = {
     return cards[0] ?? mapCard(cardData as AppointmentCardRow, profile, [], [], []);
   },
 
+  async requestManagedCardChange(card) {
+    const client = assertSupabase();
+    const user = await getAuthenticatedUser();
+    const profile = await ensureProfile(user);
+    const cleanCardId = card.id.trim();
+    const cleanTitle = card.title.trim();
+    const cleanLocation = card.location.trim();
+    const cleanMessage = card.message.trim();
+    const cleanCandidates = card.candidates.filter((candidate) => candidate.startsAt.trim().length > 0);
+    const status: AppointmentStatus = card.mode === 'DIRECT' ? 'PENDING' : 'VOTING';
+
+    if (!cleanCardId || !cleanTitle || !cleanLocation || cleanCandidates.length === 0) {
+      throw new Error('수정할 카드 내용을 확인해 주세요.');
+    }
+
+    const { data: updatedCardData, error: updateCardError } = await client
+      .from('appointment_cards')
+      .update({
+        mode: card.mode,
+        status,
+        title: cleanTitle,
+        location: cleanLocation,
+        message: cleanMessage,
+        selected_candidate_id: null,
+      })
+      .eq('id', cleanCardId)
+      .eq('owner_id', user.id)
+      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+      .single();
+
+    if (updateCardError) {
+      throw updateCardError;
+    }
+
+    const { error: appointmentDeleteError } = await client
+      .from('appointments')
+      .delete()
+      .eq('owner_id', user.id)
+      .eq('card_id', cleanCardId);
+
+    if (appointmentDeleteError) {
+      throw appointmentDeleteError;
+    }
+
+    const { error: respondentDeleteError } = await client
+      .from('appointment_respondents')
+      .delete()
+      .eq('card_id', cleanCardId);
+
+    if (respondentDeleteError) {
+      throw respondentDeleteError;
+    }
+
+    const { error: candidateDeleteError } = await client
+      .from('appointment_candidates')
+      .delete()
+      .eq('card_id', cleanCardId);
+
+    if (candidateDeleteError) {
+      throw candidateDeleteError;
+    }
+
+    const { data: candidatesData, error: candidatesError } = await client
+      .from('appointment_candidates')
+      .insert(
+        cleanCandidates.map((candidate, index) => ({
+          card_id: cleanCardId,
+          starts_at: candidate.startsAt,
+          ends_at: candidate.endsAt || getCandidateEndsAt(candidate.startsAt),
+          label: candidate.label || formatDraftDateTimeLabel(candidate.startsAt),
+          short_label: candidate.shortLabel || formatDraftDateTimeShortLabel(candidate.startsAt),
+          sort_order: index,
+        })),
+      )
+      .select('id, card_id, starts_at, ends_at, label, short_label, sort_order');
+
+    if (candidatesError) {
+      throw candidatesError;
+    }
+
+    const candidates = (candidatesData ?? []) as AppointmentCandidateRow[];
+    const selectedCandidate = candidates[0];
+    const cardWithSelection =
+      selectedCandidate && card.mode === 'DIRECT'
+        ? await client
+            .from('appointment_cards')
+            .update({ selected_candidate_id: selectedCandidate.id })
+            .eq('id', cleanCardId)
+            .eq('owner_id', user.id)
+            .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+            .single()
+        : { data: updatedCardData, error: null };
+
+    if (cardWithSelection.error) {
+      throw cardWithSelection.error;
+    }
+
+    const updatedCards = await mapCardsWithDetails(
+      [cardWithSelection.data as AppointmentCardRow],
+      await getProfilesById([profile.id], profile),
+    );
+    const updatedCard =
+      updatedCards[0] ?? mapCard(cardWithSelection.data as AppointmentCardRow, profile, candidates, [], []);
+
+    return {
+      ...updatedCard,
+      recipientProfileIds: card.recipientProfileIds,
+    };
+  },
+
   async deleteManagedCard(cardId) {
     const client = assertSupabase();
-    await getAuthenticatedUser();
-    const { error } = await client.from('appointment_cards').delete().eq('id', cardId);
+    const user = await getAuthenticatedUser();
+    const cleanCardId = cardId.trim();
+    const { error: appointmentDeleteError } = await client
+      .from('appointments')
+      .delete()
+      .eq('owner_id', user.id)
+      .eq('card_id', cleanCardId);
+
+    if (appointmentDeleteError) {
+      throw appointmentDeleteError;
+    }
+
+    const { error } = await client.from('appointment_cards').delete().eq('id', cleanCardId).eq('owner_id', user.id);
 
     if (error) {
       throw error;
@@ -787,7 +911,7 @@ export const supabasePromiseRepository: PromiseRepository = {
       throw deliveryError;
     }
 
-    const receivedCards = await listCardsByRecipient(['PENDING', 'VOTING', 'CONFIRMED']);
+    const receivedCards = await listCardsByRecipient(['PENDING', 'VOTING', 'CONFIRMED', 'DECLINED']);
     const respondedCard = receivedCards.find((card) => card.id === cleanInput.cardId);
 
     if (!respondedCard) {

@@ -96,6 +96,47 @@ export function useSchedulePlanner() {
     }
   }, []);
 
+  const updateManualScheduleItem = useCallback(async (scheduleId: string, input: CreateManualScheduleInput) => {
+    setState((current) => ({ ...current, isMutating: true, error: null }));
+
+    try {
+      const { persisted, repository } = await getActiveScheduleRepository();
+      const item = await repository.updateManualScheduleItem(scheduleId, input);
+      setState((current) => ({
+        ...current,
+        manualScheduleItems: current.manualScheduleItems.map((currentItem) =>
+          currentItem.id === item.id ? item : currentItem,
+        ),
+        isMutating: false,
+        persisted,
+        error: null,
+      }));
+      return item;
+    } catch (error) {
+      setState((current) => ({ ...current, isMutating: false, error: getErrorMessage(error) }));
+      throw error;
+    }
+  }, []);
+
+  const deleteManualScheduleItem = useCallback(async (scheduleId: string) => {
+    setState((current) => ({ ...current, isMutating: true, error: null }));
+
+    try {
+      const { persisted, repository } = await getActiveScheduleRepository();
+      await repository.deleteManualScheduleItem(scheduleId);
+      setState((current) => ({
+        ...current,
+        manualScheduleItems: current.manualScheduleItems.filter((item) => item.id !== scheduleId),
+        isMutating: false,
+        persisted,
+        error: null,
+      }));
+    } catch (error) {
+      setState((current) => ({ ...current, isMutating: false, error: getErrorMessage(error) }));
+      throw error;
+    }
+  }, []);
+
   const createTodo = useCallback(async (input: CreateTodoInput) => {
     setState((current) => ({ ...current, isMutating: true, error: null }));
 
@@ -139,6 +180,8 @@ export function useSchedulePlanner() {
   return {
     ...state,
     createManualScheduleItem,
+    updateManualScheduleItem,
+    deleteManualScheduleItem,
     createTodo,
     toggleTodo,
   };

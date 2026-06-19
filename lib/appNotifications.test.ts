@@ -6,6 +6,9 @@ const deleteNotificationToken = vi.fn();
 const deleteNotificationTokenEq = vi.fn();
 const getExpoPushTokenAsync = vi.fn();
 const getAllScheduledNotificationsAsync = vi.fn();
+const getLastNotificationResponse = vi.fn();
+const addNotificationResponseReceivedListener = vi.fn();
+const removeNotificationResponseReceivedListener = vi.fn();
 const cancelScheduledNotificationAsync = vi.fn();
 const scheduleNotificationAsync = vi.fn();
 const setNotificationChannelAsync = vi.fn();
@@ -19,6 +22,9 @@ const buildCardReceivedNotification = vi.fn();
 const buildFriendAcceptedNotification = vi.fn();
 const buildFriendRequestNotification = vi.fn();
 const buildReminderSchedulePlan = vi.fn();
+const mockPlatform = {
+  OS: 'android',
+};
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
@@ -54,9 +60,11 @@ vi.mock('expo-notifications', () => ({
   SchedulableTriggerInputTypes: {
     DATE: 'date',
   },
+  addNotificationResponseReceivedListener,
   cancelScheduledNotificationAsync,
   getAllScheduledNotificationsAsync,
   getExpoPushTokenAsync,
+  getLastNotificationResponse,
   getPermissionsAsync,
   scheduleNotificationAsync,
   setNotificationChannelAsync,
@@ -70,9 +78,7 @@ vi.mock('expo-router', () => ({
 }));
 
 vi.mock('react-native', () => ({
-  Platform: {
-    OS: 'android',
-  },
+  Platform: mockPlatform,
 }));
 
 vi.mock('@/data/friendRepository', () => ({
@@ -139,10 +145,16 @@ describe('app notification registration', () => {
     cancelScheduledNotificationAsync.mockReset().mockResolvedValue(undefined);
     getAllScheduledNotificationsAsync.mockReset().mockResolvedValue([]);
     getExpoPushTokenAsync.mockReset().mockResolvedValue({ data: 'ExponentPushToken[test-token]' });
+    getLastNotificationResponse.mockReset().mockReturnValue(null);
+    removeNotificationResponseReceivedListener.mockReset();
+    addNotificationResponseReceivedListener.mockReset().mockReturnValue({
+      remove: removeNotificationResponseReceivedListener,
+    });
     getPermissionsAsync.mockReset().mockResolvedValue({ status: 'granted' });
     scheduleNotificationAsync.mockReset().mockResolvedValue('test-notification-id');
     setNotificationChannelAsync.mockClear();
     setNotificationHandler.mockClear();
+    mockPlatform.OS = 'android';
     listFriendState.mockReset().mockResolvedValue({ friends: [], requests: [], suggestions: [] });
     listReceivedCardAlerts.mockReset().mockResolvedValue([]);
     getActiveFriendRepository.mockReset().mockResolvedValue({ repository: { listFriendState } });
@@ -236,6 +248,18 @@ describe('app notification registration', () => {
     await sendTestAppNotification();
 
     expect(scheduleNotificationAsync).not.toHaveBeenCalled();
+  });
+
+  it('skips notification response handlers on web', async () => {
+    mockPlatform.OS = 'web';
+    const { installNotificationResponseHandler } = await import('./appNotifications');
+
+    const cleanup = installNotificationResponseHandler();
+    cleanup();
+
+    expect(getLastNotificationResponse).not.toHaveBeenCalled();
+    expect(addNotificationResponseReceivedListener).not.toHaveBeenCalled();
+    expect(removeNotificationResponseReceivedListener).not.toHaveBeenCalled();
   });
 
   it('shows phone notifications for new friend requests, accepted friends, and received cards', async () => {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CARD_CORE_CHANGE_POLICY,
   buildCardCancellationMessage,
+  filterScheduleItemsByRemovedCardIds,
   mergeManagedCardIntoLocalCards,
   mergeManagedCardsView,
   mergeRecipientProfileIds,
@@ -101,6 +102,19 @@ describe('managed card local state', () => {
     expect(removedRecentState.localCards).toEqual([]);
     expect(removedRecentState.removedCardIds).toEqual(['local-card', 'recent-card']);
     expect(managedCards).toEqual([]);
+  });
+
+  it('hides deleted card schedules while the server snapshot still contains them', () => {
+    const cardSchedule = buildScheduleItem('2026-06-20T10:00:00.000Z');
+    const visibleSchedule = {
+      ...buildScheduleItem('2026-06-21T10:00:00.000Z'),
+      id: 'visible-schedule',
+      cardId: 'visible-card',
+    };
+
+    expect(filterScheduleItemsByRemovedCardIds([cardSchedule, visibleSchedule], ['card-schedule'])).toEqual([
+      visibleSchedule,
+    ]);
   });
 
   it('targets the manage tab that contains the delivered card', () => {

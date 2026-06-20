@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import type { PromiseCard } from '@/types/promise';
 import {
   buildShareMessage,
+  CARD_RESPONSE_WINDOW_NOTICE,
   buildConfirmedCard,
   buildScheduleItemFromConfirmedCard,
   applyReceivedCardResponse,
   canDeleteManagedCard,
+  canConfirmCandidateSlot,
   compactDraftTimes,
   createDefaultCardDraft,
   createDefaultDraftTimes,
@@ -17,17 +19,28 @@ import {
   formatDraftDateTimeShortLabel,
   getCandidateEndsAt,
   getGeneratedCardTitle,
+  getCardExpiresAt,
   getManagedCardAction,
   getManagedCardInboxTab,
+  getManagedCardResponseStatItems,
   getManagedCardResponseStats,
+  getManagedCardResponseNoticeSignature,
+  getManagedCardResponseNoticeFingerprints,
   getManagedCardScope,
   getManagedCardTabLabel,
+  getManagedCardTimeLabel,
   getManagedCardRowMetaLabel,
   getManagedStatusGroup,
   getModeLabel,
+  getParticipantChoiceForSelectedSlot,
+  getRecommendedConfirmationCandidate,
   getRecipientProfileIds,
+  getResponseChoiceLabel,
+  getSentResponseArrivalCards,
   getShareUrlForClipboard,
   getShareUrlForMessage,
+  limitDraftTimeCount,
+  MAX_CARD_CANDIDATE_TIMES,
   mergeManagedCards,
   mergeDraftDatePart,
   mergeDraftTimePart,
@@ -85,6 +98,13 @@ describe('card menu helpers', () => {
 
     expect(new Set(defaultTimes).size).toBe(3);
     expect(defaultHours).toEqual([19, 20, 21]);
+  });
+
+  it('limits poll candidate draft times to five options', () => {
+    const baseDate = new Date('2026-06-17T09:00:00+09:00');
+    const defaultTimes = createDefaultDraftTimes(6, baseDate);
+
+    expect(limitDraftTimeCount(defaultTimes)).toEqual(defaultTimes.slice(0, MAX_CARD_CANDIDATE_TIMES));
   });
 
   it('labels the two creation modes with approved product names', () => {
@@ -253,7 +273,7 @@ describe('card menu helpers', () => {
       ),
     ).toEqual({
       kind: 'RESULTS',
-      label: '결과 보기',
+      label: '상세보기',
     });
     expect(getManagedCardAction({ ...baseCard, status: 'VOTING' }, new Date('2026-06-12T12:00:00+09:00'))).toEqual({
       kind: 'RESHARE',
@@ -279,7 +299,7 @@ describe('card menu helpers', () => {
       ),
     ).toEqual({
       kind: 'RESULTS',
-      label: '결과 보기',
+      label: '상세보기',
     });
     expect(
       getManagedCardAction(
@@ -362,8 +382,168 @@ describe('card menu helpers', () => {
       unanswered: 1,
     });
     expect(getManagedCardRowMetaLabel(respondedCard)).toBe('응답 2명 · 가능 1 · 어려움 1');
+    expect(getManagedCardResponseStatItems(respondedCard)).toEqual([
+      { key: 'total', label: '응답', value: 2 },
+      { key: 'yes', label: '가능', value: 1 },
+      { key: 'no', label: '어려움', value: 1 },
+    ]);
     expect(getManagedCardRowMetaLabel({ ...baseCard, participants: [] })).toBe('아직 응답 없음');
+    expect(getManagedCardResponseStatItems({ ...baseCard, participants: [] })).toEqual([]);
     expect(getManagedCardTabLabel('SENT_HAS_RESPONSE')).toBe('응답 도착');
+  });
+
+  it('changes the response notice signature when new response details arrive', () => {
+    const oneResponseCard: PromiseCard = {
+      ...baseCard,
+      participants: [{ id: 'respondent-1', name: '민', displayName: '민지', color: '#FFD6E7', choice: 'YES' }],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 } }],
+    };
+    const updatedResponseCard: PromiseCard = {
+      ...oneResponseCard,
+      participants: [
+        ...oneResponseCard.participants,
+        {
+          id: 'respondent-2',
+          name: '지',
+          displayName: '지우',
+          comment: '조금 늦을 수 있어',
+          color: '#CFF3E3',
+          choice: 'YES',
+        },
+      ],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 2, maybe: 0, no: 0, unanswered: 0 } }],
+    };
+
+    expect(getManagedCardResponseNoticeSignature([oneResponseCard])).not.toBe(
+      getManagedCardResponseNoticeSignature([updatedResponseCard]),
+    );
+    expect(getManagedCardResponseNoticeSignature([updatedResponseCard])).toBe(
+      getManagedCardResponseNoticeSignature([updatedResponseCard]),
+    );
+  });
+
+  it('tracks only unseen response fingerprints for global notice dismissal', () => {
+    const oneResponseCard: PromiseCard = {
+      ...baseCard,
+      participants: [{ id: 'respondent-1', name: '민', displayName: '민지', color: '#FFD6E7', choice: 'YES' }],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 } }],
+    };
+    const twoResponseCard: PromiseCard = {
+      ...oneResponseCard,
+      participants: [
+        ...oneResponseCard.participants,
+        { id: 'respondent-2', name: '지', displayName: '지우', color: '#CFF3E3', choice: 'NO' },
+      ],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 1, maybe: 0, no: 1, unanswered: 0 } }],
+    };
+    const threeResponseCard: PromiseCard = {
+      ...twoResponseCard,
+      participants: [
+        ...twoResponseCard.participants,
+        { id: 'respondent-3', name: '수', displayName: '수아', color: '#FFF0B8', choice: 'YES' },
+      ],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 2, maybe: 0, no: 1, unanswered: 0 } }],
+    };
+    const dismissedFingerprints = getManagedCardResponseNoticeFingerprints([twoResponseCard]);
+    const remainingFingerprints = getManagedCardResponseNoticeFingerprints([oneResponseCard]);
+    const updatedFingerprints = getManagedCardResponseNoticeFingerprints([threeResponseCard]);
+
+    expect(remainingFingerprints.every((fingerprint) => dismissedFingerprints.includes(fingerprint))).toBe(true);
+    expect(updatedFingerprints.some((fingerprint) => !dismissedFingerprints.includes(fingerprint))).toBe(true);
+  });
+
+  it('selects sent response arrival cards for the global top notice', () => {
+    const now = new Date('2026-06-12T12:00:00+09:00');
+    const pendingResponseCard: PromiseCard = {
+      ...baseCard,
+      status: 'PENDING',
+      participants: [{ id: 'respondent-1', name: '민', displayName: '민지', color: '#FFD6E7', choice: 'YES' }],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 } }],
+    };
+    const declinedResponseCard: PromiseCard = {
+      ...baseCard,
+      id: 'declined-card',
+      status: 'DECLINED',
+      participants: [{ id: 'respondent-2', name: '지', displayName: '지우', color: '#CFF3E3', choice: 'NO' }],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 } }],
+    };
+    const receivedCard: PromiseCard = {
+      ...baseCard,
+      id: 'received-card',
+      requesterName: '하린',
+      participants: [{ id: 'respondent-3', name: '수', displayName: '수아', color: '#FFF0B8', choice: 'YES' }],
+      candidates: [{ ...baseCard.candidates[0], summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 } }],
+    };
+
+    expect(
+      getSentResponseArrivalCards([pendingResponseCard, declinedResponseCard, receivedCard], now).map((card) => card.id),
+    ).toEqual([pendingResponseCard.id, declinedResponseCard.id]);
+  });
+
+  it('recommends the strongest candidate with possible responses for quick confirmation', () => {
+    const pollCard: PromiseCard = {
+      ...baseCard,
+      mode: 'POLL',
+      status: 'VOTING',
+      selectedSlotId: undefined,
+      candidates: [
+        {
+          ...baseCard.candidates[0],
+          id: 'slot-1',
+          summary: { yes: 1, maybe: 0, no: 1, unanswered: 0 },
+        },
+        {
+          ...baseCard.candidates[0],
+          id: 'slot-2',
+          startsAt: june15At2000,
+          endsAt: getCandidateEndsAt(june15At2000),
+          label: '6월 15일 20:00',
+          shortLabel: '6.15 20:00',
+          summary: { yes: 2, maybe: 0, no: 0, unanswered: 0 },
+        },
+      ],
+    };
+
+    expect(getRecommendedConfirmationCandidate(pollCard)?.id).toBe('slot-2');
+    expect(
+      getRecommendedConfirmationCandidate({
+        ...pollCard,
+        selectedSlotId: 'slot-1',
+      })?.id,
+    ).toBe('slot-1');
+    expect(
+      getRecommendedConfirmationCandidate({
+        ...pollCard,
+        candidates: pollCard.candidates.map((candidate) => ({
+          ...candidate,
+          summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 },
+        })),
+      }),
+    ).toBeUndefined();
+    expect(canConfirmCandidateSlot(pollCard.candidates[0]!)).toBe(true);
+    expect(canConfirmCandidateSlot({ summary: { yes: 0, maybe: 0, no: 2, unanswered: 0 } })).toBe(false);
+  });
+
+  it('shows every poll candidate time in managed card rows', () => {
+    const pollCard: PromiseCard = {
+      ...baseCard,
+      mode: 'POLL',
+      status: 'VOTING',
+      candidates: [
+        baseCard.candidates[0],
+        {
+          ...baseCard.candidates[0],
+          id: 'slot-2',
+          startsAt: june15At2000,
+          endsAt: getCandidateEndsAt(june15At2000),
+          label: '6월 15일 20:00',
+          shortLabel: '6.15 20:00',
+        },
+      ],
+    };
+
+    expect(getManagedCardTimeLabel(pollCard)).toBe(['6.14 19:30', '6.15 20:00'].join('\n'));
+    expect(getManagedCardTimeLabel(baseCard)).toBe('6.14 19:30');
   });
 
   it('opens received cards instead of owner-only management actions', () => {
@@ -470,6 +650,8 @@ describe('card menu helpers', () => {
       timeLabel: '19:30 - 20:30',
       location: '성수 카페',
       status: 'REMINDER_ON',
+      selectedSlotId: 'slot-1',
+      candidates: receivedConfirmedCard.candidates,
       participants: [
         {
           id: 'profile-minseo',
@@ -485,6 +667,46 @@ describe('card menu helpers', () => {
 
     expect(buildScheduleItemFromConfirmedCard({ ...receivedConfirmedCard, selectedSlotId: 'missing' })).toBeNull();
     expect(buildScheduleItemFromConfirmedCard({ ...receivedConfirmedCard, status: 'VOTING' })).toBeNull();
+  });
+
+  it('uses the selected candidate response when showing confirmed poll participants', () => {
+    const pollCard: PromiseCard = {
+      ...baseCard,
+      mode: 'POLL',
+      status: 'CONFIRMED',
+      selectedSlotId: 'slot-2',
+      candidates: [
+        baseCard.candidates[0],
+        {
+          ...baseCard.candidates[0],
+          id: 'slot-2',
+          startsAt: june15At2000,
+          endsAt: getCandidateEndsAt(june15At2000),
+          label: '6월 15일 20:00',
+          shortLabel: '6/15 20:00',
+          summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 },
+        },
+      ],
+      participants: [
+        {
+          id: 'respondent-1',
+          name: '민',
+          displayName: '민지',
+          color: '#FFD6E7',
+          choice: 'YES',
+          responses: [
+            { candidateId: 'slot-1', choice: 'YES' },
+            { candidateId: 'slot-2', choice: 'NO' },
+          ],
+        },
+      ],
+    };
+
+    const choice = getParticipantChoiceForSelectedSlot(pollCard, pollCard.participants[0]!);
+
+    expect(choice).toBe('NO');
+    expect(getResponseChoiceLabel(choice)).toBe('\uC5B4\uB824\uC6C0');
+    expect(getResponseChoiceLabel(undefined)).toBe('\uBBF8\uC751\uB2F5');
   });
 
   it('applies a received card response to summaries and participant state', () => {
@@ -534,10 +756,11 @@ describe('card menu helpers', () => {
   it('builds a concise share message that points invitees to the response link', () => {
     expect(buildShareMessage(baseCard)).toBe(
       [
-        '언제볼래? 약속 초대가 왔어요',
+        '이때볼래? 약속 초대가 왔어요',
         '6월 14일 19:30 · 성수 카페',
         '한마디: 가볍게 한 시간만 보자',
         '가능 여부 알려줘',
+        CARD_RESPONSE_WINDOW_NOTICE,
         'whenbollae.app/c/card-test',
       ].join('\n'),
     );
@@ -562,18 +785,23 @@ describe('card menu helpers', () => {
     ).toBe(
       [
         '언제볼래? 약속 초대가 왔어요',
-        '6월 14일 19:30 / 6월 15일 20:00 · 성수 카페',
+        '시간',
+        '- 6월 14일 19:30',
+        '- 6월 15일 20:00',
+        '어디서: 성수 카페',
         '한마디: 가볍게 한 시간만 보자',
         '가능 여부 알려줘',
+        CARD_RESPONSE_WINDOW_NOTICE,
         'whenbollae.app/c/card-test',
       ].join('\n'),
     );
 
     expect(buildShareMessage({ ...baseCard, message: '' })).toBe(
       [
-        '언제볼래? 약속 초대가 왔어요',
+        '이때볼래? 약속 초대가 왔어요',
         '6월 14일 19:30 · 성수 카페',
         '가능 여부 알려줘',
+        CARD_RESPONSE_WINDOW_NOTICE,
         'whenbollae.app/c/card-test',
       ].join('\n'),
     );
@@ -581,6 +809,10 @@ describe('card menu helpers', () => {
 
   it('uses a shorter display URL in Kakao share messages', () => {
     expect(getShareUrlForMessage(baseCard)).toBe('whenbollae.app/c/card-test');
+  });
+
+  it('sets the shared card response window to three days from creation', () => {
+    expect(getCardExpiresAt('2026-06-20T10:00:00.000Z')).toBe('2026-06-23T10:00:00.000Z');
   });
 
   it('returns only the public URL for clipboard link sharing', () => {
@@ -696,5 +928,71 @@ describe('card menu helpers', () => {
       { yes: 1, maybe: 0, no: 0, unanswered: 1 },
       { yes: 0, maybe: 0, no: 1, unanswered: 1 },
     ]);
+  });
+
+  it('covers the app-friend card flow from recipient selection to confirmed schedule creation', () => {
+    const recipientIds = getRecipientProfileIds(
+      [
+        { id: 'friend-a', profileId: 'profile-a' },
+        { id: 'friend-b', profileId: 'profile-b' },
+      ],
+      ['friend-a'],
+    );
+    const sentCard: PromiseCard = {
+      ...baseCard,
+      mode: 'POLL',
+      status: 'VOTING',
+      recipientProfileIds: recipientIds,
+      selectedSlotId: undefined,
+      candidates: [
+        baseCard.candidates[0],
+        {
+          ...baseCard.candidates[0],
+          id: 'slot-2',
+          startsAt: june15At2000,
+          endsAt: getCandidateEndsAt(june15At2000),
+          label: '6월 15일 20:00',
+          shortLabel: '6/15 20:00',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+        },
+      ],
+    };
+
+    const respondedCard = applyReceivedCardResponse(sentCard, {
+      respondentId: 'profile-a',
+      respondentName: 'App Friend',
+      respondentComment: 'I can make the second slot',
+      responses: [
+        { candidateId: 'slot-1', choice: 'NO' },
+        { candidateId: 'slot-2', choice: 'YES' },
+      ],
+    });
+    const confirmedCard = buildConfirmedCard(respondedCard, 'slot-2');
+    const scheduleItem = buildScheduleItemFromConfirmedCard(confirmedCard);
+
+    expect(recipientIds).toEqual(['profile-a']);
+    expect(respondedCard.participants[0]).toMatchObject({
+      id: 'profile-a',
+      displayName: 'App Friend',
+      comment: 'I can make the second slot',
+      choice: 'YES',
+      responses: [
+        { candidateId: 'slot-1', choice: 'NO' },
+        { candidateId: 'slot-2', choice: 'YES' },
+      ],
+    });
+    expect(confirmedCard).toMatchObject({ status: 'CONFIRMED', selectedSlotId: 'slot-2' });
+    expect(scheduleItem).toMatchObject({
+      cardId: sentCard.id,
+      selectedSlotId: 'slot-2',
+      startsAt: june15At2000,
+      location: sentCard.location,
+      participants: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'profile-a',
+          comment: 'I can make the second slot',
+        }),
+      ]),
+    });
   });
 });

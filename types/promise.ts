@@ -46,6 +46,7 @@ export interface PromiseCard {
   message: string;
   sharedUrl: string;
   createdAt: string;
+  expiresAt?: string;
   selectedSlotId?: string;
   recipientProfileIds?: string[];
   candidates: CandidateSlot[];
@@ -62,6 +63,8 @@ export interface ScheduleItem {
   timeLabel: string;
   location: string;
   status: 'READY' | 'WAITING' | 'REMINDER_ON';
+  selectedSlotId?: string;
+  candidates?: CandidateSlot[];
   participants?: Participant[];
 }
 
@@ -119,6 +122,12 @@ export interface ReceivedCardAlert {
   createdAt: string;
 }
 
+export interface MobileSyncSnapshot {
+  serverTime: string;
+  syncVersion: string;
+  hasChanges: boolean;
+}
+
 export interface SchedulePlannerRepository {
   listManualScheduleItems(): Promise<DisplayScheduleItem[]>;
   createManualScheduleItem(input: CreateManualScheduleInput): Promise<DisplayScheduleItem>;
@@ -144,6 +153,7 @@ export interface PromiseRepository {
   listRecentCards(): Promise<PromiseCard[]>;
   listScheduleItems(): Promise<ScheduleItem[]>;
   listReceivedCardAlerts(): Promise<ReceivedCardAlert[]>;
+  getMobileSyncSnapshot(since?: string | null): Promise<MobileSyncSnapshot>;
   createManagedCard(card: PromiseCard): Promise<PromiseCard>;
   sendManagedCardToRecipients(cardId: string, recipientProfileIds: string[]): Promise<PromiseCard>;
   requestManagedCardChange(card: PromiseCard): Promise<PromiseCard>;

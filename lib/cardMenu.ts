@@ -44,6 +44,14 @@ export interface ManagedCardResponseStats {
   unanswered: number;
 }
 
+export type ManagedCardResponseStatTone = 'total' | 'yes' | 'no';
+
+export interface ManagedCardResponseStatItem {
+  key: ManagedCardResponseStatTone;
+  label: string;
+  value: number;
+}
+
 export interface ManagedCardAction {
   kind: ManagedCardActionKind;
   label: string;
@@ -66,11 +74,21 @@ export function getModeLabel(mode: AppointmentMode): string {
 const DEFAULT_MEETING_HOUR = 19;
 const DEFAULT_MEETING_MINUTE = 0;
 const MEETING_DURATION_MINUTES = 60;
+export const MAX_CARD_CANDIDATE_TIMES = 5;
+export const CARD_RESPONSE_WINDOW_DAYS = 3;
+export const CARD_RESPONSE_WINDOW_NOTICE = '카드는 3일 동안 응답을 받을 수 있어요.';
 export const DUPLICATE_DRAFT_TIME_ERROR = '후보 시간을 서로 다르게 입력해 주세요.';
 export const PAST_DRAFT_TIME_ERROR = '지난 시간으로는 카드를 만들 수 없어요. 지금 이후의 날짜와 시간을 선택해 주세요.';
 
 function padTwo(value: number): string {
   return String(value).padStart(2, '0');
+}
+
+export function getCardExpiresAt(createdAt: string, responseWindowDays = CARD_RESPONSE_WINDOW_DAYS): string {
+  const createdDate = new Date(createdAt);
+  const baseDate = Number.isNaN(createdDate.getTime()) ? new Date() : createdDate;
+
+  return new Date(baseDate.getTime() + responseWindowDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function parseDraftDateTime(value: string): Date | null {
@@ -111,6 +129,10 @@ export function ensureDraftTimeCount(times: string[], count: number, baseDate = 
   }
 
   return nextTimes;
+}
+
+export function limitDraftTimeCount(times: string[], maxCount = MAX_CARD_CANDIDATE_TIMES): string[] {
+  return times.slice(0, maxCount);
 }
 
 export function removeDraftTimeAtIndex(
@@ -292,12 +314,58 @@ export function getGeneratedCardTitle(draft: CardDraft): string {
   return `${location}에서 언제볼래?`;
 }
 
-export function getPrimarySlot(card: PromiseCard): CandidateSlot | undefined {
+export function getPrimarySlot(card: Pick<PromiseCard, 'candidates' | 'selectedSlotId'>): CandidateSlot | undefined {
   return card.candidates.find((candidate) => candidate.id === card.selectedSlotId) ?? card.candidates[0];
+}
+
+function getCandidateShortDisplayLabel(candidate?: Pick<CandidateSlot, 'label' | 'shortLabel'>): string {
+  return candidate?.shortLabel.trim() || candidate?.label.trim() || '';
+}
+
+function getCandidateFullDisplayLabel(candidate?: Pick<CandidateSlot, 'label' | 'shortLabel'>): string {
+  return candidate?.label.trim() || candidate?.shortLabel.trim() || '';
+}
+
+export function getManagedCardTimeLabel(card: Pick<PromiseCard, 'mode' | 'candidates' | 'selectedSlotId'>): string {
+  if (card.mode === 'POLL') {
+    const labels = card.candidates.map(getCandidateShortDisplayLabel).filter(Boolean);
+
+    if (labels.length > 0) {
+      return labels.join('\n');
+    }
+  }
+
+  return getCandidateShortDisplayLabel(getPrimarySlot(card));
 }
 
 export function formatCandidateResponseSummary(summary: CandidateSlot['summary']): string {
   return `가능 ${summary.yes} · 어려움 ${summary.no}`;
+}
+
+export function canConfirmCandidateSlot(candidate: Pick<CandidateSlot, 'summary'>): boolean {
+  return candidate.summary.yes > 0;
+}
+
+export function getRecommendedConfirmationCandidate(
+  card: Pick<PromiseCard, 'candidates' | 'selectedSlotId'>,
+): CandidateSlot | undefined {
+  const candidatesWithYes = card.candidates.filter(canConfirmCandidateSlot);
+
+  if (candidatesWithYes.length === 0) {
+    return undefined;
+  }
+
+  const selectedCandidate = card.selectedSlotId
+    ? candidatesWithYes.find((candidate) => candidate.id === card.selectedSlotId)
+    : undefined;
+
+  if (selectedCandidate) {
+    return selectedCandidate;
+  }
+
+  return candidatesWithYes.reduce((bestCandidate, candidate) =>
+    candidate.summary.yes > bestCandidate.summary.yes ? candidate : bestCandidate,
+  );
 }
 
 export function getManagedCardScope(card: PromiseCard): ManagedCardScope {
@@ -326,6 +394,128 @@ export function getManagedCardResponseStats(card: PromiseCard): ManagedCardRespo
     },
     { total: 0, yes: 0, maybe: 0, no: 0, unanswered: 0 },
   );
+}
+
+export function getManagedCardResponseStatItems(card: PromiseCard): ManagedCardResponseStatItem[] {
+  const stats = getManagedCardResponseStats(card);
+
+  if (stats.total === 0) {
+    return [];
+  }
+
+  return [
+    { key: 'total', label: '응답', value: stats.total },
+    { key: 'yes', label: '가능', value: stats.yes },
+    { key: 'no', label: '어려움', value: stats.no },
+  ];
+}
+
+export function getSentResponseArrivalCards(
+  cards: PromiseCard[],
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): PromiseCard[] {
+  return cards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === 'SENT_HAS_RESPONSE');
+}
+
+export function getManagedCardResponseNoticeSignature(
+  cards: Array<Pick<PromiseCard, 'id' | 'status' | 'candidates' | 'participants'>>,
+): string {
+  return cards
+    .map((card) => {
+      const candidateSignature = card.candidates
+        .map(
+          (candidate) =>
+            `${candidate.id}:${candidate.summary.yes}:${candidate.summary.maybe}:${candidate.summary.no}:${candidate.summary.unanswered}`,
+        )
+        .join(',');
+      const participantSignature = card.participants
+        .map((participant) => {
+          const responseSignature = participant.responses
+            ?.map((response) => `${response.candidateId}:${response.choice}`)
+            .sort()
+            .join(',');
+
+          return [
+            participant.id,
+            participant.choice ?? '',
+            participant.displayName ?? '',
+            participant.comment ?? '',
+            responseSignature ?? '',
+          ].join(':');
+        })
+        .sort()
+        .join(',');
+
+      return `${card.id}:${card.status}:${candidateSignature}:${participantSignature}`;
+    })
+    .sort()
+    .join('|');
+}
+
+export function getManagedCardResponseNoticeFingerprints(
+  cards: Array<Pick<PromiseCard, 'id' | 'candidates' | 'participants'>>,
+): string[] {
+  return cards
+    .flatMap((card) => {
+      const participantFingerprints = card.participants
+        .filter((participant) => {
+          const choice = participant.choice ?? 'UNANSWERED';
+          return choice !== 'UNANSWERED' || (participant.responses?.length ?? 0) > 0;
+        })
+        .map((participant) => {
+          const responseSignature = participant.responses
+            ?.map((response) => `${response.candidateId}:${response.choice}`)
+            .sort()
+            .join(',');
+
+          return [
+            card.id,
+            participant.id,
+            participant.choice ?? '',
+            participant.displayName ?? '',
+            participant.comment ?? '',
+            responseSignature ?? '',
+          ].join(':');
+        });
+
+      if (participantFingerprints.length > 0) {
+        return participantFingerprints;
+      }
+
+      return card.candidates
+        .filter((candidate) => candidate.summary.yes > 0 || candidate.summary.maybe > 0 || candidate.summary.no > 0)
+        .map(
+          (candidate) =>
+            `${card.id}:${candidate.id}:${candidate.summary.yes}:${candidate.summary.maybe}:${candidate.summary.no}`,
+        );
+    })
+    .sort();
+}
+
+export function getResponseChoiceLabel(choice: ResponseChoice | undefined): string {
+  switch (choice ?? 'UNANSWERED') {
+    case 'YES':
+      return '\uAC00\uB2A5';
+    case 'MAYBE':
+      return '\uC560\uB9E4';
+    case 'NO':
+      return '\uC5B4\uB824\uC6C0';
+    case 'UNANSWERED':
+      return '\uBBF8\uC751\uB2F5';
+  }
+}
+
+export function getParticipantChoiceForSelectedSlot(
+  card: Pick<PromiseCard, 'candidates' | 'selectedSlotId'>,
+  participant: Pick<Participant, 'choice' | 'responses'>,
+): ResponseChoice {
+  const selectedSlotId = card.selectedSlotId ?? card.candidates[0]?.id;
+  const selectedResponse = selectedSlotId
+    ? participant.responses?.find((response) => response.candidateId === selectedSlotId)
+    : undefined;
+
+  return selectedResponse?.choice ?? participant.choice ?? 'UNANSWERED';
 }
 
 function normalizeProfileText(value: string | undefined): string {
@@ -468,15 +658,15 @@ export function getManagedCardAction(card: PromiseCard, now = new Date()): Manag
   switch (getManagedStatusGroup(card, now)) {
     case 'PENDING':
       return hasManagedCardResponses(card)
-        ? { kind: 'RESULTS', label: '결과 보기' }
+        ? { kind: 'RESULTS', label: '상세보기' }
         : { kind: 'RESHARE', label: '공유 다시하기' };
     case 'VOTING':
       return hasManagedCardResponses(card)
-        ? { kind: 'RESULTS', label: '결과 보기' }
+        ? { kind: 'RESULTS', label: '상세보기' }
         : { kind: 'RESHARE', label: '공유 다시하기' };
     case 'DECLINED':
       return hasManagedCardResponses(card)
-        ? { kind: 'RESULTS', label: '결과 보기' }
+        ? { kind: 'RESULTS', label: '상세보기' }
         : { kind: 'RECREATE', label: '다시 만들기' };
     case 'CONFIRMED':
       return { kind: 'SCHEDULE', label: '일정 보기' };
@@ -487,8 +677,8 @@ export function getManagedCardAction(card: PromiseCard, now = new Date()): Manag
 
 export function buildShareMessage(card: PromiseCard): string {
   const lines = [
-    '언제볼래? 약속 초대가 왔어요',
-    `${card.candidates.map((candidate) => candidate.label).join(' / ')} · ${card.location}`,
+    `${getModeLabel(card.mode)} 약속 초대가 왔어요`,
+    ...getShareScheduleLines(card),
   ];
   const message = card.message.trim();
 
@@ -497,9 +687,20 @@ export function buildShareMessage(card: PromiseCard): string {
   }
 
   lines.push('가능 여부 알려줘');
+  lines.push(CARD_RESPONSE_WINDOW_NOTICE);
   lines.push(getShareUrlForMessage(card));
 
   return lines.join('\n');
+}
+
+function getShareScheduleLines(card: Pick<PromiseCard, 'mode' | 'candidates' | 'location'>): string[] {
+  const candidateLabels = card.candidates.map(getCandidateFullDisplayLabel).filter(Boolean);
+
+  if (card.mode === 'POLL' && candidateLabels.length > 1) {
+    return ['시간', ...candidateLabels.map((label) => `- ${label}`), `어디서: ${card.location}`];
+  }
+
+  return [`${candidateLabels[0] ?? '시간 미정'} · ${card.location}`];
 }
 
 export function getShareUrlForMessage(card: Pick<PromiseCard, 'sharedUrl'>): string {
@@ -575,6 +776,8 @@ export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleI
       : `${padTwo(startDate.getHours())}:${padTwo(startDate.getMinutes())}`,
     location: card.location,
     status: 'REMINDER_ON',
+    selectedSlotId: selectedSlot.id,
+    candidates: card.candidates.map((candidate) => ({ ...candidate })),
     participants: card.participants.map((participant) => ({ ...participant })),
   };
 }

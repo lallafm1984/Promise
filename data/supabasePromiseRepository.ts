@@ -10,6 +10,7 @@ import {
   buildScheduleItemFromConfirmedCard,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
+  getCardExpiresAt,
   getCandidateEndsAt,
   mergeManagedCards,
 } from '@/lib/cardMenu';
@@ -21,6 +22,7 @@ import type {
   CandidateSlot,
   ConfirmCardInput,
   HostProfile,
+  MobileSyncSnapshot,
   Participant,
   PromiseCard,
   PromiseRepository,
@@ -41,6 +43,7 @@ interface AppointmentCardRow {
   public_token: string;
   selected_candidate_id: string | null;
   created_at: string;
+  expires_at: string;
 }
 
 interface AppointmentCandidateRow {
@@ -84,6 +87,15 @@ interface CardRecipientRow {
   card_id: string;
 }
 
+interface MobileSyncSnapshotRow {
+  serverTime?: string;
+  server_time?: string;
+  syncVersion?: string;
+  sync_version?: string;
+  hasChanges?: boolean;
+  has_changes?: boolean;
+}
+
 type SupabaseClient = ReturnType<typeof assertSupabase>;
 
 export async function isSupabasePromiseRepositoryAvailable() {
@@ -93,6 +105,31 @@ export async function isSupabasePromiseRepositoryAvailable() {
 
   const { data } = await supabase.auth.getSession();
   return Boolean(data.session?.user);
+}
+
+function mapMobileSyncSnapshot(value: unknown): MobileSyncSnapshot {
+  const snapshot = (value ?? {}) as MobileSyncSnapshotRow;
+  const now = new Date().toISOString();
+
+  return {
+    serverTime: snapshot.serverTime ?? snapshot.server_time ?? now,
+    syncVersion: snapshot.syncVersion ?? snapshot.sync_version ?? now,
+    hasChanges: snapshot.hasChanges ?? snapshot.has_changes ?? true,
+  };
+}
+
+function isExpiredOpenCard(card: AppointmentCardRow, nowMs = Date.now()) {
+  if (card.status !== 'PENDING' && card.status !== 'VOTING') {
+    return false;
+  }
+
+  const expiresAtMs = new Date(card.expires_at).getTime();
+  return !Number.isNaN(expiresAtMs) && expiresAtMs <= nowMs;
+}
+
+function filterExpiredOpenCards(cards: AppointmentCardRow[]) {
+  const nowMs = Date.now();
+  return cards.filter((card) => !isExpiredOpenCard(card, nowMs));
 }
 
 function countResponses(candidateId: string, responses: CandidateResponseRow[]) {
@@ -200,6 +237,7 @@ function mapCard(
     message: card.message,
     sharedUrl: `${CARD_BASE_URL}/c/${card.public_token}`,
     createdAt: card.created_at,
+    expiresAt: card.expires_at,
     selectedSlotId: card.selected_candidate_id ?? cardCandidates[0]?.id,
     candidates: cardCandidates.map<CandidateSlot>((candidate) => ({
       id: candidate.id,
@@ -301,7 +339,7 @@ async function listCardsByOwner(statuses?: AppointmentStatus[]) {
   const profile = await ensureProfile(user);
   let query = client
     .from('appointment_cards')
-    .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+    .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
     .eq('owner_id', user.id)
     .order('created_at', { ascending: false });
 
@@ -315,7 +353,7 @@ async function listCardsByOwner(statuses?: AppointmentStatus[]) {
     throw cardsError;
   }
 
-  const cards = (cardsData ?? []) as AppointmentCardRow[];
+  const cards = filterExpiredOpenCards((cardsData ?? []) as AppointmentCardRow[]);
 
   return mapCardsWithDetails(cards, await getProfilesById([profile.id], profile));
 }
@@ -341,7 +379,7 @@ async function listReceivedCardAlertRows(statuses?: AppointmentStatus[]): Promis
 
   let query = client
     .from('appointment_cards')
-    .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+    .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
     .in('id', cardIds)
     .order('created_at', { ascending: false });
 
@@ -355,7 +393,7 @@ async function listReceivedCardAlertRows(statuses?: AppointmentStatus[]): Promis
     throw cardsError;
   }
 
-  const cards = (cardsData ?? []) as AppointmentCardRow[];
+  const cards = filterExpiredOpenCards((cardsData ?? []) as AppointmentCardRow[]);
   const profilesById = await getProfilesById(cards.map((card) => card.owner_id));
 
   return cards.map((card) => ({
@@ -388,7 +426,7 @@ async function listCardsByRecipient(statuses?: AppointmentStatus[]) {
 
   let query = client
     .from('appointment_cards')
-    .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+    .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
     .in('id', cardIds)
     .order('created_at', { ascending: false });
 
@@ -402,7 +440,7 @@ async function listCardsByRecipient(statuses?: AppointmentStatus[]) {
     throw cardsError;
   }
 
-  const cards = (cardsData ?? []) as AppointmentCardRow[];
+  const cards = filterExpiredOpenCards((cardsData ?? []) as AppointmentCardRow[]);
   const profilesById = await getProfilesById(cards.map((card) => card.owner_id));
   const mappedCards = await mapCardsWithDetails(cards, profilesById);
 
@@ -447,6 +485,7 @@ export const supabasePromiseRepository: PromiseRepository = {
         .select('id, card_id, title, location, starts_at, ends_at')
         .eq('owner_id', user.id)
         .not('card_id', 'is', null)
+        .is('deleted_at', null)
         .order('starts_at', { ascending: true }),
       listCardsByRecipient(['CONFIRMED']),
       listCardsByOwner(['CONFIRMED']),
@@ -471,6 +510,8 @@ export const supabasePromiseRepository: PromiseRepository = {
         timeLabel: formatScheduleTimeLabel(appointment.starts_at, appointment.ends_at),
         location: appointment.location,
         status: 'REMINDER_ON',
+        selectedSlotId: card?.selectedSlotId,
+        candidates: card?.candidates.map((candidate) => ({ ...candidate })) ?? [],
         participants: card?.participants.map((participant) => ({ ...participant })) ?? [],
       };
     });
@@ -491,6 +532,17 @@ export const supabasePromiseRepository: PromiseRepository = {
     return listReceivedCardAlertRows(['PENDING', 'VOTING']);
   },
 
+  async getMobileSyncSnapshot(since) {
+    const client = assertSupabase();
+    const { data, error } = await client.rpc('get_mobile_sync_snapshot', { p_since: since ?? null });
+
+    if (error) {
+      throw error;
+    }
+
+    return mapMobileSyncSnapshot(data);
+  },
+
   async createManagedCard(card) {
     const client = assertSupabase();
     const user = await getAuthenticatedUser();
@@ -507,7 +559,7 @@ export const supabasePromiseRepository: PromiseRepository = {
         location: card.location,
         message: card.message,
       })
-      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
       .single();
 
     if (cardError) {
@@ -541,7 +593,7 @@ export const supabasePromiseRepository: PromiseRepository = {
             .from('appointment_cards')
             .update({ selected_candidate_id: selectedCandidate.id })
             .eq('id', insertedCard.id)
-            .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+            .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
             .single()
         : { data: insertedCard, error: null };
 
@@ -582,7 +634,7 @@ export const supabasePromiseRepository: PromiseRepository = {
 
     const { data: cardData, error: cardError } = await client
       .from('appointment_cards')
-      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
       .eq('id', cleanCardId)
       .eq('owner_id', user.id)
       .single();
@@ -634,10 +686,11 @@ export const supabasePromiseRepository: PromiseRepository = {
         location: cleanLocation,
         message: cleanMessage,
         selected_candidate_id: null,
+        expires_at: getCardExpiresAt(new Date().toISOString()),
       })
       .eq('id', cleanCardId)
       .eq('owner_id', user.id)
-      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
       .single();
 
     if (updateCardError) {
@@ -699,7 +752,7 @@ export const supabasePromiseRepository: PromiseRepository = {
             .update({ selected_candidate_id: selectedCandidate.id })
             .eq('id', cleanCardId)
             .eq('owner_id', user.id)
-            .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+            .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
             .single()
         : { data: updatedCardData, error: null };
 
@@ -749,7 +802,7 @@ export const supabasePromiseRepository: PromiseRepository = {
 
     const { data: cardData, error: cardError } = await client
       .from('appointment_cards')
-      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
       .eq('id', cleanInput.cardId)
       .eq('owner_id', user.id)
       .single();
@@ -779,7 +832,7 @@ export const supabasePromiseRepository: PromiseRepository = {
       })
       .eq('id', card.id)
       .eq('owner_id', user.id)
-      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at')
+      .select('id, owner_id, mode, status, title, location, message, public_token, selected_candidate_id, created_at, expires_at')
       .single();
 
     if (updateCardError) {

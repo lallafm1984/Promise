@@ -40,11 +40,14 @@ import { usePromiseData } from '@/hooks/usePromiseData';
 import { useSchedulePlanner } from '@/hooks/useSchedulePlanner';
 import {
   buildShareMessage,
+  buildScheduleItemFromConfirmedCard,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
   getCandidateEndsAt,
+  getParticipantChoiceForSelectedSlot,
+  getResponseChoiceLabel,
 } from '@/lib/cardMenu';
-import { buildCardCancellationMessage } from '@/lib/managedCards';
+import { buildCardCancellationMessage, filterScheduleItemsByRemovedCardIds } from '@/lib/managedCards';
 import {
   compareScheduleItems,
   formatMonthTitle,
@@ -57,7 +60,7 @@ import {
   startOfDay,
   toDateKey,
 } from '@/lib/scheduleCalendar';
-import type { DisplayScheduleItem, PromiseCard, ScheduleColorKey, TodoItem } from '@/types/promise';
+import type { DisplayScheduleItem, PromiseCard, ResponseChoice, ScheduleColorKey, TodoItem } from '@/types/promise';
 
 type ScheduleMode = 'SCHEDULE' | 'TODO';
 type ScheduleParticipant = NonNullable<DisplayScheduleItem['participants']>[number];
@@ -101,6 +104,30 @@ function getScheduleParticipantComment(participant: ScheduleParticipant) {
   return participant.comment?.trim();
 }
 
+function getScheduleParticipantChoice(item: DisplayScheduleItem, participant: ScheduleParticipant): ResponseChoice {
+  if (item.candidates && item.candidates.length > 0) {
+    return getParticipantChoiceForSelectedSlot(
+      { candidates: item.candidates, selectedSlotId: item.selectedSlotId },
+      participant,
+    );
+  }
+
+  return participant.choice ?? 'UNANSWERED';
+}
+
+function getScheduleParticipantChoiceBadgeStyle(choice: ResponseChoice) {
+  switch (choice) {
+    case 'YES':
+      return styles.cardResponseChoiceYes;
+    case 'MAYBE':
+      return styles.cardResponseChoiceMaybe;
+    case 'NO':
+      return styles.cardResponseChoiceNo;
+    case 'UNANSWERED':
+      return styles.cardResponseChoiceUnanswered;
+  }
+}
+
 const weekdayLabels = ['일', '월', '화', '수', '목', '금', '토'];
 const TODO_WEEK_DRAG_LIMIT = 60;
 const TODO_WEEK_RELEASE_THRESHOLD = 34;
@@ -123,7 +150,7 @@ if (Platform.OS === 'android') {
 export default function ScheduleScreen() {
   const { date } = useLocalSearchParams<{ date?: string | string[] }>();
   const { scheduleItems } = usePromiseData();
-  const { managedCards, requestManagedCardChange, removeManagedCard } = useManagedCards();
+  const { managedCards, removedCardIds, requestManagedCardChange, removeManagedCard } = useManagedCards();
   const {
     manualScheduleItems,
     todos,
@@ -159,8 +186,17 @@ export default function ScheduleScreen() {
   const visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
   const todoWeekCells = useMemo(() => getWeekCells(selectedDate), [selectedDate]);
   const cardScheduleItems = useMemo<DisplayScheduleItem[]>(
-    () => scheduleItems.map((item) => ({ ...item, source: 'CARD' })),
-    [scheduleItems],
+    () => {
+      const serverCardScheduleItems = filterScheduleItemsByRemovedCardIds(scheduleItems, removedCardIds);
+      const serverCardIds = new Set(serverCardScheduleItems.map((item) => item.cardId));
+      const localCardScheduleItems = managedCards
+        .map((card) => buildScheduleItemFromConfirmedCard(card))
+        .filter((item): item is NonNullable<ReturnType<typeof buildScheduleItemFromConfirmedCard>> => Boolean(item))
+        .filter((item) => !serverCardIds.has(item.cardId));
+
+      return [...serverCardScheduleItems, ...localCardScheduleItems].map((item) => ({ ...item, source: 'CARD' }));
+    },
+    [managedCards, removedCardIds, scheduleItems],
   );
   const allScheduleItems = useMemo<DisplayScheduleItem[]>(
     () => [...manualScheduleItems, ...cardScheduleItems],
@@ -862,48 +898,50 @@ function ScheduleDialogModal({
 }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={dialog !== null}>
-      <View style={styles.modalBackdrop}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
         {dialog ? (
-          <View style={styles.dialogPanel}>
-            <View style={[styles.dialogIcon, dialog.tone === 'danger' ? styles.dialogDangerIcon : styles.dialogNoticeIcon]}>
-              <AlertTriangle size={22} color={dialog.tone === 'danger' ? palette.danger : palette.primaryDeep} />
-            </View>
-            <View style={styles.dialogCopy}>
-              <Text style={styles.modalTitle}>{dialog.title}</Text>
-              <Text style={styles.dialogBody}>{dialog.body}</Text>
-            </View>
-            <View style={styles.dialogActions}>
-              {dialog.actions.map((action) => {
-                const variant = action.variant ?? 'primary';
+          <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.dialogPanel}>
+              <View style={[styles.dialogIcon, dialog.tone === 'danger' ? styles.dialogDangerIcon : styles.dialogNoticeIcon]}>
+                <AlertTriangle size={22} color={dialog.tone === 'danger' ? palette.danger : palette.primaryDeep} />
+              </View>
+              <View style={styles.dialogCopy}>
+                <Text style={styles.modalTitle}>{dialog.title}</Text>
+                <Text style={styles.dialogBody}>{dialog.body}</Text>
+              </View>
+              <View style={styles.dialogActions}>
+                {dialog.actions.map((action) => {
+                  const variant = action.variant ?? 'primary';
 
-                return (
-                  <Pressable
-                    key={action.label}
-                    accessibilityRole="button"
-                    onPress={action.onPress}
-                    style={({ pressed }) => [
-                      styles.dialogActionButton,
-                      variant === 'danger'
-                        ? styles.dialogDangerButton
-                        : variant === 'secondary'
-                          ? styles.dialogSecondaryButton
-                          : styles.dialogPrimaryButton,
-                      pressed && styles.pressed,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.dialogActionText,
-                        variant === 'primary' && styles.dialogPrimaryActionText,
+                  return (
+                    <Pressable
+                      key={action.label}
+                      accessibilityRole="button"
+                      onPress={action.onPress}
+                      style={({ pressed }) => [
+                        styles.dialogActionButton,
+                        variant === 'danger'
+                          ? styles.dialogDangerButton
+                          : variant === 'secondary'
+                            ? styles.dialogSecondaryButton
+                            : styles.dialogPrimaryButton,
+                        pressed && styles.pressed,
                       ]}>
-                      {action.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+                      <Text
+                        style={[
+                          styles.dialogActionText,
+                          variant === 'primary' && styles.dialogPrimaryActionText,
+                        ]}>
+                        {action.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
-          </View>
+          </Pressable>
         ) : null}
-      </View>
+      </Pressable>
     </Modal>
   );
 }
@@ -1073,7 +1111,7 @@ function ScheduleItemCard({
               style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
               <Pencil size={15} color={palette.primaryDeep} />
             </Pressable>
-            <Chip label="카드 생성" tone="lime" />
+            <Chip label="약속 카드" tone="lime" />
           </View>
           <View style={styles.cardScheduleInfoRow}>
             <Clock3 size={15} color={palette.primaryDeep} />
@@ -1087,12 +1125,13 @@ function ScheduleItemCard({
             <View style={styles.cardResponsePanel}>
               <View style={styles.cardResponseHeader}>
                 <MessageCircle size={14} color={palette.primaryDeep} />
-                <Text style={styles.cardResponseTitle}>응답자 한마디</Text>
+                <Text style={styles.cardResponseTitle}>참여자 응답</Text>
               </View>
               <View style={styles.cardResponseList}>
                 {participants.map((participant) => {
                   const displayName = getScheduleParticipantDisplayName(participant);
                   const comment = getScheduleParticipantComment(participant);
+                  const choice = getScheduleParticipantChoice(item, participant);
 
                   return (
                     <View key={participant.id} style={styles.cardResponseRow}>
@@ -1100,9 +1139,14 @@ function ScheduleItemCard({
                         <Text style={styles.cardResponseAvatarText}>{participant.name}</Text>
                       </View>
                       <View style={styles.cardResponseCopy}>
-                        <Text style={styles.cardResponseName} numberOfLines={1}>
-                          {displayName}
-                        </Text>
+                        <View style={styles.cardResponseNameRow}>
+                          <Text style={styles.cardResponseName} numberOfLines={1}>
+                            {displayName}
+                          </Text>
+                          <View style={[styles.cardResponseChoiceBadge, getScheduleParticipantChoiceBadgeStyle(choice)]}>
+                            <Text style={styles.cardResponseChoiceText}>{getResponseChoiceLabel(choice)}</Text>
+                          </View>
+                        </View>
                         <Text
                           style={comment ? styles.cardResponseComment : styles.cardResponseCommentMuted}
                           numberOfLines={2}>
@@ -1238,9 +1282,10 @@ function CardScheduleActionModal({
 }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={item !== null}>
-      <View style={styles.modalBackdrop}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
         {item ? (
-          <View style={styles.modalPanel}>
+          <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.modalPanel}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleGroup}>
                 <Text style={styles.modalKicker}>{item.dateLabel}</Text>
@@ -1285,9 +1330,10 @@ function CardScheduleActionModal({
               <Trash2 size={16} color={isPending ? palette.inkSoft : palette.primaryDeep} />
               <Text style={[styles.modalDeleteText, isPending && styles.disabledSubmitText]}>일정 삭제하기</Text>
             </Pressable>
-          </View>
+            </View>
+          </Pressable>
         ) : null}
-      </View>
+      </Pressable>
     </Modal>
   );
 }
@@ -1355,8 +1401,9 @@ function ComposerModal({
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={mode !== null}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalPanel}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
           <View style={styles.modalHeader}>
             <View style={styles.modalTitleGroup}>
               <Text style={styles.modalKicker}>{formatSelectedDate(selectedDate)}</Text>
@@ -1455,8 +1502,9 @@ function ComposerModal({
               {isSubmitting ? '저장 중' : submitLabel}
             </Text>
           </Pressable>
-        </View>
-      </View>
+          </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -1938,9 +1986,40 @@ const styles = StyleSheet.create({
     gap: 2,
     minWidth: 0,
   },
+  cardResponseNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    minWidth: 0,
+  },
   cardResponseName: {
     color: palette.ink,
+    flex: 1,
     fontSize: 13,
+    fontWeight: '900',
+  },
+  cardResponseChoiceBadge: {
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  cardResponseChoiceYes: {
+    backgroundColor: palette.limeSoft,
+  },
+  cardResponseChoiceMaybe: {
+    backgroundColor: palette.amberSoft,
+  },
+  cardResponseChoiceNo: {
+    backgroundColor: palette.coralSoft,
+  },
+  cardResponseChoiceUnanswered: {
+    backgroundColor: palette.surface,
+  },
+  cardResponseChoiceText: {
+    color: palette.ink,
+    fontSize: 10,
     fontWeight: '900',
   },
   cardResponseComment: {
@@ -2144,6 +2223,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: spacing.md,
+  },
+  modalPressGuard: {
+    alignItems: 'center',
+    width: '100%',
   },
   modalPanel: {
     backgroundColor: palette.surface,

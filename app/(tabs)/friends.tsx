@@ -468,61 +468,63 @@ function AddFriendModal({
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalPanel}>
-          <View style={styles.modalHeader}>
-            <View style={styles.modalTitleGroup}>
-              <Text style={styles.modalKicker}>친구 요청</Text>
-              <Text style={styles.modalTitle}>친구 추가</Text>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleGroup}>
+                <Text style={styles.modalKicker}>친구 요청</Text>
+                <Text style={styles.modalTitle}>친구 추가</Text>
+              </View>
+              <Pressable
+                accessibilityLabel="친구 추가 닫기"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
             </View>
-            <Pressable
-              accessibilityLabel="친구 추가 닫기"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={onClose}
-              style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
-              <X size={19} color={palette.primaryDeep} />
-            </Pressable>
-          </View>
 
-          <View style={styles.modalInputShell}>
-            <View style={styles.modalInputLabelRow}>
-              <Search size={16} color={palette.primaryDeep} />
-              <Text style={styles.modalInputLabel}>아이디 또는 프로필 링크</Text>
+            <View style={styles.modalInputShell}>
+              <View style={styles.modalInputLabelRow}>
+                <Search size={16} color={palette.primaryDeep} />
+                <Text style={styles.modalInputLabel}>아이디 또는 프로필 링크</Text>
+              </View>
+              <TextInput
+                accessibilityLabel="친구 아이디 또는 프로필 링크"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={onChangeFriendInput}
+                placeholder="@handle 또는 whenbollae.app/@handle"
+                placeholderTextColor={palette.inkSoft}
+                style={styles.modalInput}
+                value={friendInput}
+              />
             </View>
-            <TextInput
-              accessibilityLabel="친구 아이디 또는 프로필 링크"
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChangeText={onChangeFriendInput}
-              placeholder="@handle 또는 whenbollae.app/@handle"
-              placeholderTextColor={palette.inkSoft}
-              style={styles.modalInput}
-              value={friendInput}
-            />
-          </View>
-          {error ? <Text style={styles.modalError}>{error}</Text> : null}
+            {error ? <Text style={styles.modalError}>{error}</Text> : null}
 
-          <View style={styles.modalActions}>
-            <ActionButton label="닫기" variant="secondary" fullWidth onPress={onClose} />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled }}
-              disabled={disabled}
-              onPress={onSubmit}
-              style={({ pressed }) => [
-                styles.modalSubmitButton,
-                disabled && styles.disabledSubmitButton,
-                pressed && !disabled && styles.pressed,
-              ]}>
-              <UserPlus size={17} color={disabled ? palette.inkSoft : palette.onLight} />
-              <Text style={[styles.modalSubmitText, disabled && styles.disabledSubmitText]}>
-                {isSubmitting ? '처리 중' : '요청 보내기'}
-              </Text>
-            </Pressable>
+            <View style={styles.modalActions}>
+              <ActionButton label="닫기" variant="secondary" fullWidth onPress={onClose} />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled }}
+                disabled={disabled}
+                onPress={onSubmit}
+                style={({ pressed }) => [
+                  styles.modalSubmitButton,
+                  disabled && styles.disabledSubmitButton,
+                  pressed && !disabled && styles.pressed,
+                ]}>
+                <UserPlus size={17} color={disabled ? palette.inkSoft : palette.onLight} />
+                <Text style={[styles.modalSubmitText, disabled && styles.disabledSubmitText]}>
+                  {isSubmitting ? '처리 중' : '요청 보내기'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -544,21 +546,23 @@ function ConfirmModal({
 }) {
   return (
     <Modal animationType="fade" onRequestClose={onCancel} transparent visible={visible}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalPanel}>
-          <View style={styles.confirmIcon}>
-            <AlertTriangle size={24} color={palette.danger} />
+      <Pressable style={styles.modalBackdrop} onPress={onCancel}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
+            <View style={styles.confirmIcon}>
+              <AlertTriangle size={24} color={palette.danger} />
+            </View>
+            <View style={styles.confirmCopy}>
+              <Text style={styles.modalTitle}>{title}</Text>
+              <Text style={styles.confirmBody}>{body}</Text>
+            </View>
+            <View style={styles.modalActions}>
+              <ActionButton label="취소" variant="secondary" fullWidth onPress={onCancel} />
+              <ActionButton label={confirmLabel} variant="danger" fullWidth onPress={onConfirm} />
+            </View>
           </View>
-          <View style={styles.confirmCopy}>
-            <Text style={styles.modalTitle}>{title}</Text>
-            <Text style={styles.confirmBody}>{body}</Text>
-          </View>
-          <View style={styles.modalActions}>
-            <ActionButton label="취소" variant="secondary" fullWidth onPress={onCancel} />
-            <ActionButton label={confirmLabel} variant="danger" fullWidth onPress={onConfirm} />
-          </View>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -899,6 +903,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: spacing.md,
+  },
+  modalPressGuard: {
+    alignItems: 'center',
+    width: '100%',
   },
   modalPanel: {
     backgroundColor: palette.surface,

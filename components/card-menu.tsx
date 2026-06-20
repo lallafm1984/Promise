@@ -1,4 +1,4 @@
-import { createElement, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
+import { createElement, forwardRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
 import DateTimePicker from '@expo/ui/community/datetime-picker';
 import { CalendarDays, Clock3, MapPin, MessageCircle, Plus, Trash2 } from 'lucide-react-native';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -11,11 +11,15 @@ import {
   formatDraftTimeInputValue,
   canDeleteManagedCard,
   getManagedCardInboxTab,
+  getManagedCardResponseStatItems,
   getManagedCardRowMetaLabel,
+  getManagedCardScope,
   getManagedCardAction,
   getManagedCardTabLabel,
+  getManagedCardTimeLabel,
   getModeLabel,
-  getPrimarySlot,
+  getParticipantChoiceForSelectedSlot,
+  getResponseChoiceLabel,
   mergeDraftDatePart,
   mergeDraftDateTime,
   mergeDraftTimePart,
@@ -23,7 +27,7 @@ import {
   type ManagedCardCurrentProfile,
   type ManagedCardInboxTab,
 } from '@/lib/cardMenu';
-import type { AppointmentMode, PromiseCard } from '@/types/promise';
+import type { AppointmentMode, PromiseCard, ResponseChoice } from '@/types/promise';
 
 interface ModeSelectorProps {
   value: AppointmentMode;
@@ -43,6 +47,7 @@ interface DraftInputProps {
 interface CandidateTimeFieldsProps {
   mode: AppointmentMode;
   times: string[];
+  maxTimes?: number;
   onChangeTime: (index: number, value: string) => void;
   onAdd: () => void;
   onRemove: (index: number) => void;
@@ -124,7 +129,10 @@ function ModeOption({
   );
 }
 
-export function DraftInput({ label, value, placeholder, icon, multiline, onChangeText, onFocus }: DraftInputProps) {
+export const DraftInput = forwardRef<TextInput, DraftInputProps>(function DraftInput(
+  { label, value, placeholder, icon, multiline, onChangeText, onFocus },
+  ref,
+) {
   return (
     <View style={[styles.inputShell, multiline && styles.multilineShell]}>
       <View style={styles.inputLabelRow}>
@@ -132,6 +140,7 @@ export function DraftInput({ label, value, placeholder, icon, multiline, onChang
         <Text style={styles.inputLabel}>{label}</Text>
       </View>
       <TextInput
+        ref={ref}
         accessibilityLabel={label}
         value={value}
         multiline={multiline}
@@ -143,11 +152,12 @@ export function DraftInput({ label, value, placeholder, icon, multiline, onChang
       />
     </View>
   );
-}
+});
 
-export function CandidateTimeFields({ mode, times, onChangeTime, onAdd, onRemove }: CandidateTimeFieldsProps) {
+export function CandidateTimeFields({ mode, times, maxTimes, onChangeTime, onAdd, onRemove }: CandidateTimeFieldsProps) {
   const [activePicker, setActivePicker] = useState<ActivePicker | null>(null);
   const isPollMode = mode === 'POLL';
+  const hasReachedMaxTimes = maxTimes !== undefined && times.length >= maxTimes;
 
   return (
     <View style={styles.stack}>
@@ -166,9 +176,10 @@ export function CandidateTimeFields({ mode, times, onChangeTime, onAdd, onRemove
       ))}
       {isPollMode ? (
         <ActionButton
-          label={CANDIDATE_ADD_LABEL}
+          label={hasReachedMaxTimes ? `최대 ${maxTimes}개까지 가능` : CANDIDATE_ADD_LABEL}
           variant="secondary"
           icon={<Plus size={17} color={palette.primaryDeep} />}
+          disabled={hasReachedMaxTimes}
           onPress={onAdd}
         />
       ) : null}
@@ -353,7 +364,6 @@ export function ManagedCardsSection({
           key={card.id}
           card={card}
           now={now}
-          toneIndex={index}
           currentProfile={currentProfile ?? undefined}
           onAction={onAction}
           onDelete={onDelete}
@@ -366,25 +376,26 @@ export function ManagedCardsSection({
 function ManagedCardRow({
   card,
   now,
-  toneIndex,
   currentProfile,
   onAction,
   onDelete,
 }: {
   card: PromiseCard;
   now: Date;
-  toneIndex: number;
   currentProfile?: ManagedCardCurrentProfile;
   onAction: ManagedCardsSectionProps['onAction'];
   onDelete?: ManagedCardsSectionProps['onDelete'];
 }) {
   const action = getManagedCardAction(card, now);
-  const primarySlot = getPrimarySlot(card);
   const statusTitle = getManagedCardTabLabel(getManagedCardInboxTab(card, now, currentProfile));
   const rowMetaLabel = getManagedCardRowMetaLabel(card, currentProfile);
+  const responseStatItems = getManagedCardResponseStatItems(card);
+  const shouldShowResponseStats = getManagedCardScope(card) === 'SENT' && responseStatItems.length > 0;
+  const shouldShowParticipantResponses = card.status === 'CONFIRMED' && card.participants.length > 0;
+  const timeLabel = getManagedCardTimeLabel(card) || UNKNOWN_TIME_LABEL;
 
   return (
-    <Card style={[styles.managedCard, managedCardToneStyles[toneIndex % managedCardToneStyles.length]]}>
+    <Card style={[styles.managedCard, getManagedCardModeToneStyle(card.mode)]}>
       <View style={styles.managedTop}>
         <Chip label={getModeLabel(card.mode)} tone={card.mode === 'DIRECT' ? 'amber' : 'aqua'} />
         <View style={styles.managedTopActions}>
@@ -406,23 +417,104 @@ function ManagedCardRow({
       <Text style={styles.managedTitle} numberOfLines={2}>
         {card.title}
       </Text>
-      <Text style={styles.managedMeta} numberOfLines={1}>
-        {rowMetaLabel}
-      </Text>
+      {shouldShowResponseStats ? (
+        <ManagedResponseStats items={responseStatItems} />
+      ) : (
+        <Text style={styles.managedMeta} numberOfLines={1}>
+          {rowMetaLabel}
+        </Text>
+      )}
       <View style={styles.previewInfoList}>
-        <InfoPill icon={<Clock3 size={15} color={palette.primaryDeep} />} text={primarySlot?.shortLabel ?? UNKNOWN_TIME_LABEL} />
+        <InfoPill
+          icon={<Clock3 size={15} color={palette.primaryDeep} />}
+          text={timeLabel}
+          numberOfLines={card.mode === 'POLL' ? Math.max(card.candidates.length, 2) : 2}
+        />
         <InfoPill icon={<MapPin size={15} color={palette.primaryDeep} />} text={card.location} />
       </View>
+      {shouldShowParticipantResponses ? <ManagedParticipantSummary card={card} /> : null}
       <ActionButton label={action.label} variant="secondary" fullWidth onPress={() => onAction(card, action.kind)} />
     </Card>
   );
 }
 
-function InfoPill({ icon, text }: { icon: ReactNode; text: string }) {
+function ManagedResponseStats({ items }: { items: ReturnType<typeof getManagedCardResponseStatItems> }) {
+  return (
+    <View style={styles.managedResponseStats}>
+      {items.map((item) => (
+        <View key={item.key} style={[styles.managedResponseStat, styles[`${item.key}ManagedResponseStat`]]}>
+          <Text style={styles.managedResponseStatLabel}>{item.label}</Text>
+          <Text style={styles.managedResponseStatValue}>{item.value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function getManagedCardModeToneStyle(mode: AppointmentMode) {
+  return mode === 'DIRECT' ? styles.managedCardDirect : styles.managedCardPoll;
+}
+
+function ManagedParticipantSummary({ card }: { card: PromiseCard }) {
+  return (
+    <View style={styles.managedParticipantPanel}>
+      <View style={styles.managedParticipantHeader}>
+        <MessageCircle size={14} color={palette.primaryDeep} />
+        <Text style={styles.managedParticipantTitle}>{'\uCC38\uC5EC\uC790 \uC751\uB2F5'}</Text>
+        <Text style={styles.managedParticipantCount}>{card.participants.length}</Text>
+      </View>
+      <View style={styles.managedParticipantList}>
+        {card.participants.map((participant) => {
+          const choice = getParticipantChoiceForSelectedSlot(card, participant);
+          const comment = participant.comment?.trim();
+          const displayName = participant.displayName?.trim() || participant.name;
+
+          return (
+            <View key={participant.id} style={styles.managedParticipantRow}>
+              <View style={[styles.managedParticipantAvatar, { backgroundColor: participant.color }]}>
+                <Text style={styles.managedParticipantAvatarText}>{participant.name}</Text>
+              </View>
+              <View style={styles.managedParticipantCopy}>
+                <View style={styles.managedParticipantNameRow}>
+                  <Text style={styles.managedParticipantName} numberOfLines={1}>
+                    {displayName}
+                  </Text>
+                  <View style={[styles.managedParticipantChoiceBadge, getManagedParticipantChoiceBadgeStyle(choice)]}>
+                    <Text style={styles.managedParticipantChoiceText}>{getResponseChoiceLabel(choice)}</Text>
+                  </View>
+                </View>
+                <Text
+                  style={comment ? styles.managedParticipantComment : styles.managedParticipantCommentMuted}
+                  numberOfLines={2}>
+                  {comment || '\uD55C\uB9C8\uB514 \uC5C6\uC74C'}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function getManagedParticipantChoiceBadgeStyle(choice: ResponseChoice) {
+  switch (choice) {
+    case 'YES':
+      return styles.managedParticipantChoiceYes;
+    case 'MAYBE':
+      return styles.managedParticipantChoiceMaybe;
+    case 'NO':
+      return styles.managedParticipantChoiceNo;
+    case 'UNANSWERED':
+      return styles.managedParticipantChoiceUnanswered;
+  }
+}
+
+function InfoPill({ icon, text, numberOfLines = 2 }: { icon: ReactNode; text: string; numberOfLines?: number }) {
   return (
     <View style={styles.infoPill}>
       {icon}
-      <Text style={styles.infoText} numberOfLines={2}>
+      <Text style={styles.infoText} numberOfLines={numberOfLines}>
         {text}
       </Text>
     </View>
@@ -696,17 +788,11 @@ const styles = StyleSheet.create({
     borderColor: palette.lineStrong,
     gap: spacing.sm,
   },
-  managedCardLime: {
-    backgroundColor: palette.limeSoft,
-  },
-  managedCardSky: {
-    backgroundColor: palette.skySoft,
-  },
-  managedCardAmber: {
+  managedCardDirect: {
     backgroundColor: palette.amberSoft,
   },
-  managedCardMint: {
-    backgroundColor: palette.mintSoft,
+  managedCardPoll: {
+    backgroundColor: palette.aquaSoft,
   },
   managedTop: {
     alignItems: 'center',
@@ -750,6 +836,150 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     lineHeight: 17,
   },
+  managedResponseStats: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  managedResponseStat: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flex: 1,
+    gap: 2,
+    minHeight: 48,
+    minWidth: 0,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 6,
+  },
+  totalManagedResponseStat: {
+    backgroundColor: palette.surface,
+  },
+  yesManagedResponseStat: {
+    backgroundColor: palette.limeSoft,
+  },
+  noManagedResponseStat: {
+    backgroundColor: palette.coralSoft,
+  },
+  managedResponseStatLabel: {
+    color: palette.inkMuted,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  managedResponseStatValue: {
+    color: palette.ink,
+    fontSize: 17,
+    fontWeight: '900',
+    lineHeight: 21,
+  },
+  managedParticipantPanel: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  managedParticipantHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  managedParticipantTitle: {
+    color: palette.primaryDeep,
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  managedParticipantCount: {
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '900',
+    minWidth: 24,
+    overflow: 'hidden',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    textAlign: 'center',
+  },
+  managedParticipantList: {
+    gap: spacing.xs,
+  },
+  managedParticipantRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  managedParticipantAvatar: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  managedParticipantAvatarText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  managedParticipantCopy: {
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  managedParticipantNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    minWidth: 0,
+  },
+  managedParticipantName: {
+    color: palette.ink,
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  managedParticipantChoiceBadge: {
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  managedParticipantChoiceYes: {
+    backgroundColor: palette.limeSoft,
+  },
+  managedParticipantChoiceMaybe: {
+    backgroundColor: palette.amberSoft,
+  },
+  managedParticipantChoiceNo: {
+    backgroundColor: palette.coralSoft,
+  },
+  managedParticipantChoiceUnanswered: {
+    backgroundColor: palette.surface,
+  },
+  managedParticipantChoiceText: {
+    color: palette.ink,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  managedParticipantComment: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
+  },
+  managedParticipantCommentMuted: {
+    color: palette.inkSoft,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
+  },
   emptyCard: {
     backgroundColor: palette.paper,
     gap: spacing.xs,
@@ -766,10 +996,3 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 });
-
-const managedCardToneStyles = [
-  styles.managedCardLime,
-  styles.managedCardSky,
-  styles.managedCardAmber,
-  styles.managedCardMint,
-];

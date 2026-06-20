@@ -167,6 +167,7 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
       .select('id, title, location, starts_at, ends_at, color_key')
       .eq('owner_id', user.id)
       .is('card_id', null)
+      .is('deleted_at', null)
       .order('starts_at', { ascending: true });
 
     if (error) {
@@ -209,6 +210,7 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
       .eq('id', scheduleId)
       .eq('owner_id', user.id)
       .is('card_id', null)
+      .is('deleted_at', null)
       .select('id, title, location, starts_at, ends_at, color_key')
       .single();
 
@@ -224,10 +226,11 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
     const user = await getAuthenticatedUser();
     const { error } = await client
       .from('appointments')
-      .delete()
+      .update({ deleted_at: new Date().toISOString() })
       .eq('id', scheduleId)
       .eq('owner_id', user.id)
-      .is('card_id', null);
+      .is('card_id', null)
+      .is('deleted_at', null);
 
     if (error) {
       throw error;
@@ -241,6 +244,7 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
       .from('todos')
       .select('id, date_key, title, detail, done, color_key')
       .eq('owner_id', user.id)
+      .is('deleted_at', null)
       .order('date_key', { ascending: true })
       .order('created_at', { ascending: false });
 
@@ -280,6 +284,7 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
       .select('id, done')
       .eq('id', todoId)
       .eq('owner_id', user.id)
+      .is('deleted_at', null)
       .single();
 
     if (currentError) {
@@ -291,6 +296,7 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
       .update({ done: !currentTodo.done })
       .eq('id', todoId)
       .eq('owner_id', user.id)
+      .is('deleted_at', null)
       .select('id, date_key, title, detail, done, color_key')
       .single();
 

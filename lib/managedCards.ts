@@ -70,6 +70,18 @@ export function removeManagedCardFromLocalState(
   };
 }
 
+export function filterScheduleItemsByRemovedCardIds<T extends Pick<ScheduleItem, 'cardId'>>(
+  scheduleItems: T[],
+  removedCardIds: string[],
+): T[] {
+  if (removedCardIds.length === 0) {
+    return scheduleItems;
+  }
+
+  const removedCardIdSet = new Set(removedCardIds);
+  return scheduleItems.filter((item) => !removedCardIdSet.has(item.cardId));
+}
+
 export function getDeliveredCardManageGroup(card: PromiseCard): ManagedStatusGroup {
   const group = getManagedStatusGroup(card);
   return group === 'VOTING' ? 'VOTING' : 'PENDING';

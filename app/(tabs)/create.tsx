@@ -2,7 +2,7 @@ import { createElement, useMemo, useRef, useState, type CSSProperties } from 're
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { AlertTriangle, Link2, MapPin, MessageCircle, Send, UsersRound, X } from 'lucide-react-native';
-import { Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   CandidateTimeFields,
@@ -16,6 +16,7 @@ import { useFriends } from '@/hooks/useFriends';
 import { useManagedCards } from '@/hooks/useManagedCards';
 import {
   buildShareMessage,
+  CARD_RESPONSE_WINDOW_NOTICE,
   compactDraftTimes,
   createDefaultCardDraft,
   createDefaultDraftTime,
@@ -23,10 +24,13 @@ import {
   ensureDraftTimeCount,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
+  getCardExpiresAt,
   getCandidateEndsAt,
   getGeneratedCardTitle,
   getModeLabel,
   getShareUrlForClipboard,
+  limitDraftTimeCount,
+  MAX_CARD_CANDIDATE_TIMES,
   PAST_DRAFT_TIME_ERROR,
   removeDraftTimeAtIndex,
   validateCardDraft,
@@ -49,6 +53,7 @@ const CARD_BASE_URL = (process.env.EXPO_PUBLIC_CARD_BASE_URL ?? 'https://whenbol
 export default function CreateCardScreen() {
   const router = useRouter();
   const screenScrollRef = useRef<ScrollView>(null);
+  const messageInputRef = useRef<TextInput>(null);
   const { addManagedCard } = useManagedCards();
   const { friends, isLoading: isFriendsLoading } = useFriends();
   const [mode, setMode] = useState<AppointmentMode>(INITIAL_DRAFT.mode);
@@ -75,11 +80,15 @@ export default function CreateCardScreen() {
   const activeDraft = useMemo<CardDraft>(
     () => ({
       ...draft,
-      times: mode === 'DIRECT' ? [times[0] ?? createDefaultDraftTime(0)] : ensureDraftTimeCount(times, 2),
+      times:
+        mode === 'DIRECT'
+          ? [times[0] ?? createDefaultDraftTime(0)]
+          : limitDraftTimeCount(ensureDraftTimeCount(times, 2)),
     }),
     [draft, mode, times],
   );
-  const visibleTimes = mode === 'DIRECT' ? [times[0] ?? createDefaultDraftTime(0)] : ensureDraftTimeCount(times, 2);
+  const visibleTimes =
+    mode === 'DIRECT' ? [times[0] ?? createDefaultDraftTime(0)] : limitDraftTimeCount(ensureDraftTimeCount(times, 2));
   const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
     () => getPreviewFriendOptions(friends),
     [friends],
@@ -92,7 +101,7 @@ export default function CreateCardScreen() {
     setValidationNotice(null);
 
     if (nextMode === 'POLL') {
-      setTimes((currentTimes) => ensureDraftTimeCount(currentTimes, 2));
+      setTimes((currentTimes) => limitDraftTimeCount(ensureDraftTimeCount(currentTimes, 2)));
       return;
     }
 
@@ -101,7 +110,7 @@ export default function CreateCardScreen() {
 
   function handleChangeTime(index: number, value: string) {
     setTimes((currentTimes) =>
-      ensureDraftTimeCount(currentTimes, mode === 'POLL' ? 2 : 1).map((time, timeIndex) =>
+      limitDraftTimeCount(ensureDraftTimeCount(currentTimes, mode === 'POLL' ? 2 : 1)).map((time, timeIndex) =>
         timeIndex === index ? value : time,
       ),
     );
@@ -113,9 +122,9 @@ export default function CreateCardScreen() {
   function handleAddTime() {
     setMode('POLL');
     setTimes((currentTimes) => {
-      const nextTimes = ensureDraftTimeCount(currentTimes, 2);
+      const nextTimes = limitDraftTimeCount(ensureDraftTimeCount(currentTimes, 2));
 
-      if (mode === 'DIRECT') {
+      if (mode === 'DIRECT' || nextTimes.length >= MAX_CARD_CANDIDATE_TIMES) {
         return nextTimes;
       }
 
@@ -198,6 +207,12 @@ export default function CreateCardScreen() {
 
     setTimeout(() => {
       screenScrollRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+  }
+
+  function focusMessageInput() {
+    setTimeout(() => {
+      messageInputRef.current?.focus();
     }, 80);
   }
 
@@ -309,6 +324,7 @@ export default function CreateCardScreen() {
         </Pressable>
       </View>
       <DraftPreviewCard card={previewCard} />
+      <Text style={styles.expirationNotice}>{CARD_RESPONSE_WINDOW_NOTICE}</Text>
       {feedback ? <Text style={styles.modalFeedback}>{feedback}</Text> : null}
       {isFriendPickerOpen ? (
         <View style={styles.friendPicker}>
@@ -424,6 +440,7 @@ export default function CreateCardScreen() {
         <CandidateTimeFields
           mode={mode}
           times={visibleTimes}
+          maxTimes={MAX_CARD_CANDIDATE_TIMES}
           onChangeTime={handleChangeTime}
           onAdd={handleAddTime}
           onRemove={handleRemoveTime}
@@ -443,6 +460,7 @@ export default function CreateCardScreen() {
         />
         {isMessageOpen ? (
           <DraftInput
+            ref={messageInputRef}
             label="한마디"
             value={message}
             placeholder="예: 늦으면 커피 내가 살게"
@@ -463,7 +481,7 @@ export default function CreateCardScreen() {
             icon={<MessageCircle size={17} color={palette.primaryDeep} />}
             onPress={() => {
               setIsMessageOpen(true);
-              scrollFocusedInputIntoView();
+              focusMessageInput();
             }}
           />
         )}
@@ -483,14 +501,17 @@ export default function CreateCardScreen() {
         : null}
       {Platform.OS !== 'web' ? (
         <Modal animationType="fade" onRequestClose={closePreview} transparent visible={previewCard !== null}>
-          <View style={styles.modalBackdrop}>
+          <Pressable style={styles.modalBackdrop} onPress={closePreview}>
             <ScrollView
               contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               style={styles.modalScrollView}>
-              {previewPanel}
+              <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+                {previewPanel}
+              </Pressable>
             </ScrollView>
-          </View>
+          </Pressable>
         </Modal>
       ) : null}
       <Modal
@@ -498,18 +519,20 @@ export default function CreateCardScreen() {
         onRequestClose={() => setValidationNotice(null)}
         transparent
         visible={validationNotice !== null}>
-        <View style={styles.modalBackdrop}>
-          <Card style={styles.validationModal}>
-            <View style={styles.validationIcon}>
-              <AlertTriangle size={24} color={palette.danger} />
-            </View>
-            <View style={styles.validationCopy}>
-              <Text style={styles.validationTitle}>후보 시간 확인</Text>
-              <Text style={styles.validationBody}>{validationNotice}</Text>
-            </View>
-            <ActionButton label="확인" fullWidth onPress={() => setValidationNotice(null)} />
-          </Card>
-        </View>
+        <Pressable style={styles.modalBackdrop} onPress={() => setValidationNotice(null)}>
+          <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+            <Card style={styles.validationModal}>
+              <View style={styles.validationIcon}>
+                <AlertTriangle size={24} color={palette.danger} />
+              </View>
+              <View style={styles.validationCopy}>
+                <Text style={styles.validationTitle}>후보 시간 확인</Text>
+                <Text style={styles.validationBody}>{validationNotice}</Text>
+              </View>
+              <ActionButton label="확인" fullWidth onPress={() => setValidationNotice(null)} />
+            </Card>
+          </Pressable>
+        </Pressable>
       </Modal>
     </>
   );
@@ -530,6 +553,7 @@ function buildPreviewCard(draft: CardDraft): PromiseCard {
     message: draft.message.trim(),
     sharedUrl: `${CARD_BASE_URL}/c/${id}`,
     createdAt,
+    expiresAt: getCardExpiresAt(createdAt),
     selectedSlotId: `${id}-slot-1`,
     candidates: times.map((time, index) => ({
       id: `${id}-slot-${index + 1}`,
@@ -643,6 +667,10 @@ const styles = StyleSheet.create({
     top: 0,
     zIndex: 1000,
   },
+  modalPressGuard: {
+    alignItems: 'center',
+    width: '100%',
+  },
   modalScrollView: {
     width: '100%',
   },
@@ -697,6 +725,18 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.72,
     transform: [{ scale: 0.99 }],
+  },
+  expirationNotice: {
+    backgroundColor: palette.amberSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 18,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   modalFeedback: {
     backgroundColor: palette.limeSoft,

@@ -422,64 +422,66 @@ function ProfileEditModal({
 }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalPanel}>
-          <View style={styles.modalHeader}>
-            <View>
-              <Text style={styles.cardKicker}>공개 프로필</Text>
-              <Text style={styles.modalTitle}>프로필 수정</Text>
+      <Pressable disabled={isSaving} style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.cardKicker}>공개 프로필</Text>
+                <Text style={styles.modalTitle}>프로필 수정</Text>
+              </View>
+              <Pressable
+                accessibilityLabel="프로필 수정 닫기"
+                accessibilityRole="button"
+                disabled={isSaving}
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && !isSaving && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
             </View>
-            <Pressable
-              accessibilityLabel="프로필 수정 닫기"
-              accessibilityRole="button"
-              disabled={isSaving}
-              hitSlop={8}
-              onPress={onClose}
-              style={({ pressed }) => [styles.modalCloseButton, pressed && !isSaving && styles.pressed]}>
-              <X size={19} color={palette.primaryDeep} />
-            </Pressable>
-          </View>
 
-          <View style={styles.inputStack}>
-            <View style={styles.inputShell}>
-              <Text style={styles.inputLabel}>이름</Text>
-              <TextInput
-                accessibilityLabel="프로필 이름"
-                maxLength={60}
-                onChangeText={onChangeDisplayName}
-                placeholder="이름을 입력하세요"
-                placeholderTextColor={palette.inkSoft}
-                style={styles.textInput}
-                value={displayName}
-              />
-            </View>
-            <View style={styles.inputShell}>
-              <Text style={styles.inputLabel}>아이디</Text>
-              <View style={styles.handleInputRow}>
-                <Text style={styles.handlePrefix}>@</Text>
+            <View style={styles.inputStack}>
+              <View style={styles.inputShell}>
+                <Text style={styles.inputLabel}>이름</Text>
                 <TextInput
-                  accessibilityLabel="프로필 아이디"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  maxLength={30}
-                  onChangeText={onChangeHandle}
-                  placeholder="handle"
+                  accessibilityLabel="프로필 이름"
+                  maxLength={60}
+                  onChangeText={onChangeDisplayName}
+                  placeholder="이름을 입력하세요"
                   placeholderTextColor={palette.inkSoft}
-                  style={[styles.textInput, styles.handleInput]}
-                  value={handle}
+                  style={styles.textInput}
+                  value={displayName}
                 />
               </View>
+              <View style={styles.inputShell}>
+                <Text style={styles.inputLabel}>아이디</Text>
+                <View style={styles.handleInputRow}>
+                  <Text style={styles.handlePrefix}>@</Text>
+                  <TextInput
+                    accessibilityLabel="프로필 아이디"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={30}
+                    onChangeText={onChangeHandle}
+                    placeholder="handle"
+                    placeholderTextColor={palette.inkSoft}
+                    style={[styles.textInput, styles.handleInput]}
+                    value={handle}
+                  />
+                </View>
+              </View>
+            </View>
+
+            {error ? <Text style={styles.modalError}>{error}</Text> : null}
+
+            <View style={styles.modalActions}>
+              <ActionButton label="취소" variant="secondary" disabled={isSaving} fullWidth onPress={onClose} />
+              <ActionButton label={isSaving ? '저장 중' : '저장'} disabled={isSaving} fullWidth onPress={onSave} />
             </View>
           </View>
-
-          {error ? <Text style={styles.modalError}>{error}</Text> : null}
-
-          <View style={styles.modalActions}>
-            <ActionButton label="취소" variant="secondary" disabled={isSaving} fullWidth onPress={onClose} />
-            <ActionButton label={isSaving ? '저장 중' : '저장'} disabled={isSaving} fullWidth onPress={onSave} />
-          </View>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -487,26 +489,28 @@ function ProfileEditModal({
 function NoticeModal({ message, onClose }: { message: string | null; onClose: () => void }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={message !== null}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalPanel}>
-          <View style={styles.modalHeader}>
-            <View>
-              <Text style={styles.cardKicker}>로그인 준비</Text>
-              <Text style={styles.modalTitle}>연결 설정이 필요해요</Text>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.cardKicker}>로그인 준비</Text>
+                <Text style={styles.modalTitle}>연결 설정이 필요해요</Text>
+              </View>
+              <Pressable
+                accessibilityLabel="안내 닫기"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
             </View>
-            <Pressable
-              accessibilityLabel="안내 닫기"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={onClose}
-              style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
-              <X size={19} color={palette.primaryDeep} />
-            </Pressable>
+            <Text style={styles.modalBody}>{message}</Text>
+            <ActionButton label="확인" fullWidth onPress={onClose} />
           </View>
-          <Text style={styles.modalBody}>{message}</Text>
-          <ActionButton label="확인" fullWidth onPress={onClose} />
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -901,6 +905,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: spacing.md,
+  },
+  modalPressGuard: {
+    alignItems: 'center',
+    width: '100%',
   },
   modalPanel: {
     backgroundColor: palette.surface,

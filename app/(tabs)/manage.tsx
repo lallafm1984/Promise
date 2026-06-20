@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { AlertTriangle, Link2, Send, UsersRound, X } from 'lucide-react-native';
+import { AlertTriangle, Link2, Send, Trash2, UsersRound, X } from 'lucide-react-native';
 import { Modal, Share, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { DraftPreviewCard, ManagedCardsSection } from '@/components/card-menu';
@@ -12,9 +12,14 @@ import { useManagedCards } from '@/hooks/useManagedCards';
 import {
   buildShareMessage,
   canDeleteManagedCard,
+  canConfirmCandidateSlot,
   formatCandidateResponseSummary,
   getManagedCardInboxTab,
+  getManagedCardResponseStats,
+  getModeLabel,
+  getPrimarySlot,
   getManagedStatusGroup,
+  getRecommendedConfirmationCandidate,
   getShareUrlForClipboard,
   type ManagedCardActionKind,
   type ManagedCardInboxTab,
@@ -27,9 +32,10 @@ import {
   isShareablePublicCard,
 } from '@/lib/previewActions';
 import { getPreviewFriendOptions, getPreviewRecipientProfileIds, selectOnePreviewFriend } from '@/lib/previewFriends';
-import type { Participant, PromiseCard, ReceivedCardResponseChoice, ResponseChoice } from '@/types/promise';
+import type { CandidateSlot, Participant, PromiseCard, ReceivedCardResponseChoice, ResponseChoice } from '@/types/promise';
 
 type SelectableResponseChoice = Exclude<ReceivedCardResponseChoice, 'MAYBE'>;
+type QuickConfirmItem = { card: PromiseCard; suggestedCandidate: CandidateSlot };
 
 const participantChoiceLabels: Record<ResponseChoice, string> = {
   YES: '가능',
@@ -67,6 +73,154 @@ function getParticipantCandidateChoice(participant: Participant, candidateId: st
   }
 
   return candidateCount === 1 ? participant.choice ?? 'UNANSWERED' : 'UNANSWERED';
+}
+
+function QuickConfirmCard({
+  card,
+  suggestedCandidate,
+  selectedCandidateId,
+  disabled,
+  canDelete,
+  onSelectCandidate,
+  onConfirm,
+  onOpenResults,
+  onDelete,
+}: {
+  card: PromiseCard;
+  suggestedCandidate: CandidateSlot;
+  selectedCandidateId?: string;
+  disabled: boolean;
+  canDelete?: boolean;
+  onSelectCandidate: (candidateId: string) => void;
+  onConfirm: (candidateId: string) => void;
+  onOpenResults: () => void;
+  onDelete?: () => void;
+}) {
+  const stats = getManagedCardResponseStats(card);
+  const hasConfirmableCandidate = card.candidates.some(canConfirmCandidateSlot);
+  const selectedCandidate =
+    card.mode === 'DIRECT'
+      ? suggestedCandidate
+      : card.candidates.find((candidate) => candidate.id === selectedCandidateId);
+  const canConfirm = Boolean(selectedCandidate && canConfirmCandidateSlot(selectedCandidate));
+  const confirmLabel =
+    !hasConfirmableCandidate
+      ? '가능 응답 없음'
+      : card.mode === 'DIRECT'
+        ? '약속 확정'
+        : selectedCandidate
+          ? `${selectedCandidate.shortLabel || selectedCandidate.label} 확정`
+          : '시간을 선택해 주세요';
+  const candidateMeta =
+    card.mode === 'DIRECT'
+      ? formatCandidateResponseSummary(suggestedCandidate.summary)
+      : hasConfirmableCandidate
+        ? '시간 선택 후 확정'
+        : '상세 확인 필요';
+
+  return (
+    <Card style={[styles.quickConfirmCard, card.mode === 'DIRECT' ? styles.quickConfirmDirect : styles.quickConfirmPoll]}>
+      <View style={styles.quickConfirmTop}>
+        <View style={styles.quickConfirmModeBadge}>
+          <Text style={styles.quickConfirmModeText}>{getModeLabel(card.mode)}</Text>
+        </View>
+        <View style={styles.quickConfirmTopActions}>
+          <Text style={styles.quickConfirmCandidateMeta}>{candidateMeta}</Text>
+          {canDelete && onDelete ? (
+            <Pressable
+              accessibilityLabel={`${card.title} 삭제`}
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={onDelete}
+              style={({ pressed }) => [styles.quickConfirmDeleteButton, pressed && styles.pressed]}>
+              <Trash2 size={15} color={palette.primaryDeep} />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.quickConfirmBody}>
+        <Text style={styles.quickConfirmCardTitle} numberOfLines={2}>
+          {card.title}
+        </Text>
+        {card.mode === 'POLL' ? (
+          <View style={styles.quickConfirmSlotList}>
+            {card.candidates.map((candidate) => {
+              const selected = selectedCandidateId === candidate.id;
+              const candidateCanConfirm = canConfirmCandidateSlot(candidate);
+
+              return (
+                <Pressable
+                  key={candidate.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !candidateCanConfirm, selected }}
+                  disabled={!candidateCanConfirm}
+                  onPress={() => onSelectCandidate(candidate.id)}
+                  style={({ pressed }) => [
+                    styles.quickConfirmSlotOption,
+                    selected && styles.selectedQuickConfirmSlotOption,
+                    !candidateCanConfirm && styles.disabledQuickConfirmSlotOption,
+                    pressed && styles.pressed,
+                  ]}>
+                  <Text
+                    style={[
+                      styles.quickConfirmSlotOptionTime,
+                      selected && styles.selectedQuickConfirmSlotOptionText,
+                      !candidateCanConfirm && styles.disabledQuickConfirmSlotOptionText,
+                    ]}
+                    numberOfLines={1}>
+                    {candidate.shortLabel || candidate.label}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.quickConfirmSlotOptionMeta,
+                      selected && styles.selectedQuickConfirmSlotOptionText,
+                      !candidateCanConfirm && styles.disabledQuickConfirmSlotOptionText,
+                    ]}
+                    numberOfLines={1}>
+                    {formatCandidateResponseSummary(candidate.summary)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : (
+          <Text style={styles.quickConfirmSlot} numberOfLines={1}>
+            {suggestedCandidate.label}
+          </Text>
+        )}
+        <Text style={styles.quickConfirmLocation} numberOfLines={1}>
+          {card.location}
+        </Text>
+      </View>
+
+      <View style={styles.quickConfirmStats}>
+        <View style={styles.quickConfirmStat}>
+          <Text style={styles.quickConfirmStatLabel}>응답</Text>
+          <Text style={styles.quickConfirmStatValue}>{stats.total}명</Text>
+        </View>
+        <View style={[styles.quickConfirmStat, styles.quickConfirmStatYes]}>
+          <Text style={styles.quickConfirmStatLabel}>가능</Text>
+          <Text style={styles.quickConfirmStatValue}>{stats.yes}</Text>
+        </View>
+        <View style={[styles.quickConfirmStat, styles.quickConfirmStatNo]}>
+          <Text style={styles.quickConfirmStatLabel}>어려움</Text>
+          <Text style={styles.quickConfirmStatValue}>{stats.no}</Text>
+        </View>
+      </View>
+
+      <View style={styles.quickConfirmActions}>
+        <ActionButton
+          label={disabled ? '확정 중' : confirmLabel}
+          variant="primary"
+          disabled={disabled || !canConfirm || !selectedCandidate}
+          fullWidth
+          onPress={() => selectedCandidate && onConfirm(selectedCandidate.id)}
+        />
+        <ActionButton label="상세보기" variant="secondary" disabled={disabled} fullWidth onPress={onOpenResults} />
+      </View>
+    </Card>
+  );
 }
 
 const scopeTabs: Array<{ key: ManagedCardScope; label: string }> = [
@@ -155,7 +309,11 @@ function getCompactManagedCardTabLabel(tab: ManagedCardInboxTab): string {
 
 export default function ManageCardsScreen() {
   const router = useRouter();
-  const { group, scroll } = useLocalSearchParams<{ group?: string | string[]; scroll?: string | string[] }>();
+  const { group, scroll, tab } = useLocalSearchParams<{
+    group?: string | string[];
+    scroll?: string | string[];
+    tab?: string | string[];
+  }>();
   const {
     profile,
     managedCards,
@@ -180,6 +338,7 @@ export default function ManageCardsScreen() {
   const [reshareFeedback, setReshareFeedback] = useState<string | null>(null);
   const [isDeletingCard, setIsDeletingCard] = useState(false);
   const [responseChoices, setResponseChoices] = useState<Record<string, SelectableResponseChoice>>({});
+  const [selectedQuickCandidateIds, setSelectedQuickCandidateIds] = useState<Record<string, string>>({});
   const [isConfirming, setIsConfirming] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const now = useMemo(() => new Date(), [managedCards]);
@@ -198,13 +357,21 @@ export default function ManageCardsScreen() {
   );
   useEffect(() => {
     const routeGroup = Array.isArray(group) ? group[0] : group;
+    const routeTab = Array.isArray(tab) ? tab[0] : tab;
+
+    if (routeTab && [...sentTabs, ...receivedTabs].includes(routeTab as ManagedCardInboxTab)) {
+      const nextTab = routeTab as ManagedCardInboxTab;
+      setActiveScope(getScopeForTab(nextTab));
+      setActiveTab(nextTab);
+      return;
+    }
 
     if (routeGroup && routeGroup in legacyGroupTabs) {
       const nextTab = legacyGroupTabs[routeGroup as ManagedStatusGroup];
       setActiveScope(getScopeForTab(nextTab));
       setActiveTab(nextTab);
     }
-  }, [group]);
+  }, [group, tab]);
   const activeTabKeys = tabsByScope[activeScope];
   const tabCounts = useMemo(
     () =>
@@ -220,6 +387,19 @@ export default function ManageCardsScreen() {
   const visibleManagedCards = useMemo(
     () => managedCards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === activeTab),
     [activeTab, currentProfile, managedCards, now],
+  );
+  const visibleResponseActionItems = useMemo(
+    () =>
+      visibleManagedCards.reduce<QuickConfirmItem[]>((items, card) => {
+        const candidate = getRecommendedConfirmationCandidate(card) ?? getPrimarySlot(card);
+
+        if (candidate) {
+          items.push({ card, suggestedCandidate: candidate });
+        }
+
+        return items;
+      }, []),
+    [visibleManagedCards],
   );
   const activeEmptyCopy = emptyCopyByTab[activeTab];
 
@@ -390,6 +570,11 @@ export default function ManageCardsScreen() {
 
     try {
       await confirmManagedCard(card.id, candidateId);
+      setSelectedQuickCandidateIds((currentCandidateIds) => {
+        const nextCandidateIds = { ...currentCandidateIds };
+        delete nextCandidateIds[card.id];
+        return nextCandidateIds;
+      });
       setResultCard(null);
       selectTab('SENT_CONFIRMED');
     } catch {
@@ -432,6 +617,13 @@ export default function ManageCardsScreen() {
     setResponseChoices((currentChoices) => ({
       ...currentChoices,
       [candidateId]: choice,
+    }));
+  }
+
+  function selectQuickConfirmCandidate(cardId: string, candidateId: string) {
+    setSelectedQuickCandidateIds((currentCandidateIds) => ({
+      ...currentCandidateIds,
+      [cardId]: candidateId,
     }));
   }
 
@@ -507,56 +699,83 @@ export default function ManageCardsScreen() {
         })}
       </View>
 
-      <ManagedCardsSection
-        cards={visibleManagedCards}
-        activeTab={activeTab}
-        currentProfile={currentProfile}
-        emptyTitle={activeEmptyCopy.title}
-        emptyBody={activeEmptyCopy.body}
-        onAction={(card, action) => void handleManagedAction(card, action)}
-        onDelete={(card) => void handleDeleteCard(card)}
-      />
+      {activeScope === 'SENT' && activeTab === 'SENT_HAS_RESPONSE' && visibleResponseActionItems.length > 0 ? (
+        <View style={styles.responseActionStack}>
+          <Text style={styles.responseActionTitle}>응답 도착</Text>
+          {visibleResponseActionItems.map(({ card, suggestedCandidate }) => (
+            <QuickConfirmCard
+              key={`${card.id}-${suggestedCandidate.id}`}
+              card={card}
+              suggestedCandidate={suggestedCandidate}
+              selectedCandidateId={selectedQuickCandidateIds[card.id]}
+              disabled={isConfirming}
+              canDelete={canDeleteManagedCard(card, now)}
+              onSelectCandidate={(candidateId) => selectQuickConfirmCandidate(card.id, candidateId)}
+              onConfirm={(candidateId) => void handleConfirmCandidate(card, candidateId)}
+              onOpenResults={() => setResultCard(card)}
+              onDelete={() => void handleDeleteCard(card)}
+            />
+          ))}
+        </View>
+      ) : (
+        <ManagedCardsSection
+          cards={visibleManagedCards}
+          activeTab={activeTab}
+          currentProfile={currentProfile}
+          emptyTitle={activeEmptyCopy.title}
+          emptyBody={activeEmptyCopy.body}
+          onAction={(card, action) => void handleManagedAction(card, action)}
+          onDelete={(card) => void handleDeleteCard(card)}
+        />
+      )}
 
       <Modal
         transparent
         visible={deleteConfirmation !== null}
         animationType="fade"
         onRequestClose={closeDeleteConfirmModal}>
-        <View style={styles.modalBackdrop}>
+        <Pressable style={styles.modalBackdrop} onPress={closeDeleteConfirmModal}>
           {deleteConfirmation ? (
-            <Card style={styles.deleteModal}>
-              <View style={styles.deleteIcon}>
-                <AlertTriangle size={24} color={palette.danger} />
-              </View>
-              <View style={styles.deleteCopy}>
-                <Text style={styles.resultTitle}>{deleteConfirmation.title}</Text>
-                <Text style={styles.deleteBody}>{deleteConfirmation.body}</Text>
-              </View>
-              <View style={styles.deleteActions}>
-                <ActionButton
-                  label="취소"
-                  variant="secondary"
-                  disabled={isDeletingCard}
-                  fullWidth
-                  onPress={closeDeleteConfirmModal}
-                />
-                <ActionButton
-                  label={isDeletingCard ? '삭제 중' : deleteConfirmation.confirmLabel}
-                  variant="danger"
-                  disabled={isDeletingCard}
-                  fullWidth
-                  onPress={() => void confirmDeleteCard()}
-                />
-              </View>
-            </Card>
+            <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+              <Card style={styles.deleteModal}>
+                <View style={styles.deleteIcon}>
+                  <AlertTriangle size={24} color={palette.danger} />
+                </View>
+                <View style={styles.deleteCopy}>
+                  <Text style={styles.resultTitle}>{deleteConfirmation.title}</Text>
+                  <Text style={styles.deleteBody}>{deleteConfirmation.body}</Text>
+                </View>
+                <View style={styles.deleteActions}>
+                  <ActionButton
+                    label="취소"
+                    variant="secondary"
+                    disabled={isDeletingCard}
+                    fullWidth
+                    onPress={closeDeleteConfirmModal}
+                  />
+                  <ActionButton
+                    label={isDeletingCard ? '삭제 중' : deleteConfirmation.confirmLabel}
+                    variant="danger"
+                    disabled={isDeletingCard}
+                    fullWidth
+                    onPress={() => void confirmDeleteCard()}
+                  />
+                </View>
+              </Card>
+            </Pressable>
           ) : null}
-        </View>
+        </Pressable>
       </Modal>
 
       <Modal transparent visible={Boolean(reshareCard)} animationType="fade" onRequestClose={closeReshareModal}>
-        <View style={styles.modalBackdrop}>
-          <ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false} style={styles.modalScrollView}>
-            {reshareCard ? (
+        <Pressable style={styles.modalBackdrop} onPress={closeReshareModal}>
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.modalScrollView}>
+            <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+              {reshareCard ? (
               <Card style={styles.reshareModal}>
                 <View style={styles.reshareHeader}>
                   <View style={styles.reshareHeaderCopy}>
@@ -665,13 +884,20 @@ export default function ManageCardsScreen() {
                   </View>
                 )}
               </Card>
-            ) : null}
+              ) : null}
+            </Pressable>
           </ScrollView>
-        </View>
+        </Pressable>
       </Modal>
 
       <Modal transparent visible={Boolean(resultCard)} animationType="fade" onRequestClose={() => setResultCard(null)}>
-        <View style={styles.modalBackdrop}>
+        <View
+          style={[styles.modalBackdrop, styles.resultModalBackdrop]}
+          onTouchEnd={(event) => {
+            if (event.target === event.currentTarget) {
+              setResultCard(null);
+            }
+          }}>
           {resultCard ? (
             <Card style={styles.resultModal}>
               <View style={styles.resultHeader}>
@@ -690,106 +916,115 @@ export default function ManageCardsScreen() {
                 </Pressable>
               </View>
 
-              <View style={styles.resultList}>
-                {resultCard.candidates.map((candidate) => {
-                  const canConfirmCandidate = canConfirmResult && candidate.summary.yes > 0;
+              <ScrollView
+                contentContainerStyle={styles.resultModalBodyContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                style={styles.resultModalBodyScroll}>
+                <View style={styles.resultList}>
+                  {resultCard.candidates.map((candidate) => {
+                    const canConfirmCandidate = canConfirmResult && canConfirmCandidateSlot(candidate);
 
-                  return (
-                    <View key={candidate.id} style={styles.resultCandidate}>
-                      <View style={styles.resultCandidateCopy}>
-                        <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
-                        <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
-                      </View>
-                      {canConfirmCandidate ? (
-                        <ActionButton
-                          label={isConfirming ? '확정 중' : '이 시간 확정'}
-                          variant="primary"
-                          disabled={isConfirming}
-                          onPress={() => void handleConfirmCandidate(resultCard, candidate.id)}
-                        />
-                      ) : canConfirmResult ? (
-                        <Text style={styles.resultCandidateConfirmHint}>가능 응답이 있어야 확정할 수 있어요.</Text>
-                      ) : null}
-                    </View>
-                  );
-                })}
-              </View>
-
-              <View style={styles.respondentPanel}>
-                <View style={styles.respondentPanelHeader}>
-                  <Text style={styles.respondentPanelTitle}>응답자 한마디</Text>
-                  <Text style={styles.respondentPanelCount}>{resultCard.participants.length}명</Text>
-                </View>
-                {resultCard.participants.length > 0 ? (
-                  <ScrollView
-                    contentContainerStyle={styles.respondentRows}
-                    showsVerticalScrollIndicator={false}
-                    style={styles.respondentRowsScroll}>
-                    {resultCard.participants.map((participant) => {
-                      const displayName = getParticipantDisplayName(participant);
-                      const comment = getParticipantComment(participant);
-                      const choice = participant.choice ?? 'UNANSWERED';
-
-                      return (
-                        <View key={participant.id} style={styles.respondentRow}>
-                          <View style={[styles.respondentAvatar, { backgroundColor: participant.color }]}>
-                            <Text style={styles.respondentAvatarText}>{participant.name}</Text>
-                          </View>
-                          <View style={styles.respondentCopy}>
-                            <View style={styles.respondentNameRow}>
-                              <Text style={styles.respondentName} numberOfLines={1}>
-                                {displayName}
-                              </Text>
-                              <View style={[styles.respondentChoiceBadge, getParticipantChoiceBadgeStyle(choice)]}>
-                                <Text style={styles.respondentChoiceText}>{participantChoiceLabels[choice]}</Text>
-                              </View>
-                            </View>
-                            <Text
-                              style={comment ? styles.respondentComment : styles.respondentCommentMuted}
-                              numberOfLines={3}>
-                              {comment || '한마디 없음'}
-                            </Text>
-                            {resultCard.mode === 'POLL' ? (
-                              <View style={styles.respondentCandidateChoices}>
-                                {resultCard.candidates.map((candidate) => {
-                                  const candidateChoice = getParticipantCandidateChoice(
-                                    participant,
-                                    candidate.id,
-                                    resultCard.candidates.length,
-                                  );
-
-                                  return (
-                                    <View
-                                      key={`${participant.id}-${candidate.id}`}
-                                      style={[
-                                        styles.respondentCandidateChoice,
-                                        getParticipantChoiceBadgeStyle(candidateChoice),
-                                      ]}>
-                                      <Text style={styles.respondentCandidateChoiceText}>
-                                        {candidate.shortLabel} {participantChoiceLabels[candidateChoice]}
-                                      </Text>
-                                    </View>
-                                  );
-                                })}
-                              </View>
-                            ) : null}
-                          </View>
+                    return (
+                      <View key={candidate.id} style={styles.resultCandidate}>
+                        <View style={styles.resultCandidateCopy}>
+                          <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
+                          <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
                         </View>
-                      );
-                    })}
-                  </ScrollView>
-                ) : (
-                  <Text style={styles.emptyRespondentText}>아직 응답이 없어요.</Text>
-                )}
-              </View>
+                        {canConfirmCandidate ? (
+                          <ActionButton
+                            label={isConfirming ? '확정 중' : '이 시간 확정'}
+                            variant="primary"
+                            disabled={isConfirming}
+                            onPress={() => void handleConfirmCandidate(resultCard, candidate.id)}
+                          />
+                        ) : canConfirmResult ? (
+                          <Text style={styles.resultCandidateConfirmHint}>가능 응답이 있어야 확정할 수 있어요.</Text>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
 
-            </Card>
+                <View style={styles.respondentPanel}>
+                  <View style={styles.respondentPanelHeader}>
+                    <Text style={styles.respondentPanelTitle}>응답자 한마디</Text>
+                    <Text style={styles.respondentPanelCount}>{resultCard.participants.length}명</Text>
+                  </View>
+                  {resultCard.participants.length > 0 ? (
+                    <View style={styles.respondentRows}>
+                      {resultCard.participants.map((participant) => {
+                        const displayName = getParticipantDisplayName(participant);
+                        const comment = getParticipantComment(participant);
+                        const choice = participant.choice ?? 'UNANSWERED';
+
+                        return (
+                          <View key={participant.id} style={styles.respondentRow}>
+                            <View style={[styles.respondentAvatar, { backgroundColor: participant.color }]}>
+                              <Text style={styles.respondentAvatarText}>{participant.name}</Text>
+                            </View>
+                            <View style={styles.respondentCopy}>
+                              <View style={styles.respondentNameRow}>
+                                <Text style={styles.respondentName} numberOfLines={1}>
+                                  {displayName}
+                                </Text>
+                                <View style={[styles.respondentChoiceBadge, getParticipantChoiceBadgeStyle(choice)]}>
+                                  <Text style={styles.respondentChoiceText}>{participantChoiceLabels[choice]}</Text>
+                                </View>
+                              </View>
+                              <Text
+                                style={comment ? styles.respondentComment : styles.respondentCommentMuted}
+                                numberOfLines={3}>
+                                {comment || '한마디 없음'}
+                              </Text>
+                              {resultCard.mode === 'POLL' ? (
+                                <View style={styles.respondentCandidateChoices}>
+                                  {resultCard.candidates.map((candidate) => {
+                                    const candidateChoice = getParticipantCandidateChoice(
+                                      participant,
+                                      candidate.id,
+                                      resultCard.candidates.length,
+                                    );
+
+                                    return (
+                                      <View
+                                        key={`${participant.id}-${candidate.id}`}
+                                        style={[
+                                          styles.respondentCandidateChoice,
+                                          getParticipantChoiceBadgeStyle(candidateChoice),
+                                        ]}>
+                                        <Text style={styles.respondentCandidateChoiceText}>
+                                          {candidate.shortLabel} {participantChoiceLabels[candidateChoice]}
+                                        </Text>
+                                      </View>
+                                    );
+                                  })}
+                                </View>
+                              ) : null}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <Text style={styles.emptyRespondentText}>아직 응답이 없어요.</Text>
+                  )}
+                </View>
+              </ScrollView>
+
+              </Card>
           ) : null}
         </View>
       </Modal>
 
       <Modal transparent visible={Boolean(responseCard)} animationType="fade" onRequestClose={() => setResponseCard(null)}>
-        <View style={styles.modalBackdrop}>
+        <View
+          style={[styles.modalBackdrop, styles.resultModalBackdrop]}
+          onTouchEnd={(event) => {
+            if (event.target === event.currentTarget) {
+              setResponseCard(null);
+            }
+          }}>
           {responseCard ? (
             <Card style={styles.resultModal}>
               <View style={styles.resultHeader}>
@@ -808,42 +1043,48 @@ export default function ManageCardsScreen() {
                 </Pressable>
               </View>
 
-              <View style={styles.resultList}>
-                {responseCard.candidates.map((candidate) => (
-                  <View key={candidate.id} style={styles.responseCandidate}>
-                    <View style={styles.resultCandidateCopy}>
-                      <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
-                      <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
-                    </View>
-                    {canRespond ? (
-                      <View style={styles.responseChoiceRow}>
-                        <ResponseChoiceButton
-                          label="가능"
-                          selected={responseChoices[candidate.id] === 'YES'}
-                          onPress={() => setCandidateChoice(candidate.id, 'YES')}
-                        />
-                        <ResponseChoiceButton
-                          label="어려움"
-                          selected={responseChoices[candidate.id] === 'NO'}
-                          onPress={() => setCandidateChoice(candidate.id, 'NO')}
-                        />
+              <ScrollView
+                contentContainerStyle={styles.resultModalBodyContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                style={styles.resultModalBodyScroll}>
+                <View style={styles.resultList}>
+                  {responseCard.candidates.map((candidate) => (
+                    <View key={candidate.id} style={styles.responseCandidate}>
+                      <View style={styles.resultCandidateCopy}>
+                        <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
+                        <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
                       </View>
-                    ) : null}
-                  </View>
-                ))}
-              </View>
+                      {canRespond ? (
+                        <View style={styles.responseChoiceRow}>
+                          <ResponseChoiceButton
+                            label="가능"
+                            selected={responseChoices[candidate.id] === 'YES'}
+                            onPress={() => setCandidateChoice(candidate.id, 'YES')}
+                          />
+                          <ResponseChoiceButton
+                            label="어려움"
+                            selected={responseChoices[candidate.id] === 'NO'}
+                            onPress={() => setCandidateChoice(candidate.id, 'NO')}
+                          />
+                        </View>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
 
-              {canRespond ? (
-                <ActionButton
-                  label={isResponding ? '응답 중' : '응답 보내기'}
-                  variant="primary"
-                  disabled={isResponding || !hasAllResponseChoices}
-                  fullWidth
-                  onPress={() => void handleSubmitResponse()}
-                />
-              ) : (
-                <Text style={styles.responseClosedText}>지난 카드는 내용을 확인만 할 수 있어요.</Text>
-              )}
+                {canRespond ? (
+                  <ActionButton
+                    label={isResponding ? '응답 중' : '응답 보내기'}
+                    variant="primary"
+                    disabled={isResponding || !hasAllResponseChoices}
+                    fullWidth
+                    onPress={() => void handleSubmitResponse()}
+                  />
+                ) : (
+                  <Text style={styles.responseClosedText}>지난 카드는 내용을 확인만 할 수 있어요.</Text>
+                )}
+              </ScrollView>
             </Card>
           ) : null}
         </View>
@@ -949,6 +1190,235 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     lineHeight: 19,
+  },
+  responseActionStack: {
+    gap: spacing.sm,
+  },
+  responseActionTitle: {
+    color: palette.ink,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  quickConfirmSection: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.lg,
+    borderWidth: 2,
+    gap: spacing.xs,
+    padding: spacing.xs,
+  },
+  quickConfirmHeader: {
+    alignItems: 'center',
+    backgroundColor: palette.amberSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 62,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  quickConfirmHeaderCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  quickConfirmKicker: {
+    color: palette.primaryDeep,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  quickConfirmTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    fontWeight: '900',
+    lineHeight: 20,
+  },
+  quickConfirmCount: {
+    backgroundColor: palette.limeSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    color: palette.ink,
+    fontSize: 13,
+    fontWeight: '900',
+    minWidth: 34,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 5,
+    textAlign: 'center',
+  },
+  quickConfirmToggle: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    minWidth: 50,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 7,
+  },
+  quickConfirmToggleText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  quickConfirmList: {
+    gap: spacing.sm,
+    paddingTop: spacing.xs,
+  },
+  quickConfirmCard: {
+    borderColor: palette.lineStrong,
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
+  quickConfirmDirect: {
+    backgroundColor: palette.amberSoft,
+  },
+  quickConfirmPoll: {
+    backgroundColor: palette.aquaSoft,
+  },
+  quickConfirmTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'space-between',
+  },
+  quickConfirmTopActions: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'flex-end',
+    minWidth: 0,
+  },
+  quickConfirmModeBadge: {
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  quickConfirmModeText: {
+    color: palette.primaryDeep,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  quickConfirmCandidateMeta: {
+    color: palette.inkMuted,
+    flexShrink: 1,
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  quickConfirmDeleteButton: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  quickConfirmBody: {
+    gap: 4,
+  },
+  quickConfirmCardTitle: {
+    color: palette.ink,
+    fontSize: 17,
+    fontWeight: '900',
+    lineHeight: 23,
+  },
+  quickConfirmSlot: {
+    color: palette.ink,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  quickConfirmSlotList: {
+    gap: spacing.xs,
+  },
+  quickConfirmSlotOption: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    minHeight: 42,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  selectedQuickConfirmSlotOption: {
+    backgroundColor: palette.limeSoft,
+  },
+  disabledQuickConfirmSlotOption: {
+    backgroundColor: palette.paper,
+    opacity: 0.62,
+  },
+  quickConfirmSlotOptionTime: {
+    color: palette.ink,
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '900',
+    minWidth: 0,
+  },
+  quickConfirmSlotOptionMeta: {
+    color: palette.inkMuted,
+    flexShrink: 0,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  selectedQuickConfirmSlotOptionText: {
+    color: palette.ink,
+  },
+  disabledQuickConfirmSlotOptionText: {
+    color: palette.inkSoft,
+  },
+  quickConfirmLocation: {
+    color: palette.inkMuted,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  quickConfirmStats: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  quickConfirmStat: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flex: 1,
+    gap: 2,
+    minHeight: 46,
+    minWidth: 0,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 6,
+  },
+  quickConfirmStatYes: {
+    backgroundColor: palette.limeSoft,
+  },
+  quickConfirmStatNo: {
+    backgroundColor: palette.coralSoft,
+  },
+  quickConfirmStatLabel: {
+    color: palette.inkMuted,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  quickConfirmStatValue: {
+    color: palette.ink,
+    fontSize: 16,
+    fontWeight: '900',
+    lineHeight: 20,
+  },
+  quickConfirmActions: {
+    gap: spacing.xs,
   },
   scopeTabs: {
     backgroundColor: palette.paper,
@@ -1062,13 +1532,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.lg,
   },
+  modalPressGuard: {
+    alignItems: 'center',
+    width: '100%',
+  },
   modalScrollView: {
+    alignSelf: 'stretch',
+    flex: 1,
+    maxHeight: '100%',
     width: '100%',
   },
   modalScrollContent: {
     alignItems: 'center',
     flexGrow: 1,
     justifyContent: 'center',
+  },
+  resultModalBackdrop: {
+    paddingBottom: spacing.md,
+    paddingTop: spacing.xxl * 3,
   },
   reshareModal: {
     gap: spacing.md,
@@ -1229,8 +1710,18 @@ const styles = StyleSheet.create({
   },
   resultModal: {
     gap: spacing.md,
+    maxHeight: '82%',
     maxWidth: 520,
+    overflow: 'hidden',
     width: '100%',
+  },
+  resultModalBodyScroll: {
+    flexShrink: 1,
+    minHeight: 0,
+  },
+  resultModalBodyContent: {
+    gap: spacing.md,
+    paddingBottom: spacing.lg,
   },
   resultHeader: {
     alignItems: 'flex-start',
@@ -1307,12 +1798,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
   },
-  respondentRowsScroll: {
-    maxHeight: 220,
-  },
   respondentRows: {
     gap: spacing.xs,
-    paddingBottom: 2,
   },
   respondentRow: {
     backgroundColor: palette.surface,

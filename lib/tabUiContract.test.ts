@@ -40,3 +40,21 @@ describe('friends empty state', () => {
     expect(emptyStateBlock).not.toContain('onAction');
   });
 });
+
+describe('create card optional message input', () => {
+  it('focuses the message field after opening it from the collapsed add button', () => {
+    const createSource = readAppFile('app/(tabs)/create.tsx');
+    const cardMenuSource = readAppFile('components/card-menu.tsx');
+    const addMessageButtonStart = createSource.indexOf('setIsMessageOpen(true);');
+    const addMessageButtonBlock = createSource.slice(addMessageButtonStart, addMessageButtonStart + 160);
+
+    expect(addMessageButtonStart).toBeGreaterThan(-1);
+    expect(cardMenuSource).toContain('forwardRef<TextInput, DraftInputProps>');
+    expect(cardMenuSource).toContain('ref={ref}');
+    expect(createSource).toContain('const messageInputRef = useRef<TextInput>(null);');
+    expect(createSource).toContain('function focusMessageInput()');
+    expect(createSource).toContain('messageInputRef.current?.focus();');
+    expect(createSource).toContain('ref={messageInputRef}');
+    expect(addMessageButtonBlock).toContain('focusMessageInput();');
+  });
+});

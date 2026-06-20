@@ -199,26 +199,28 @@ function ProviderButton({
 function NoticeModal({ message, onClose }: { message: string | null; onClose: () => void }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={message !== null}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalPanel}>
-          <View style={styles.modalHeader}>
-            <View>
-              <Text style={styles.cardKicker}>로그인 안내</Text>
-              <Text style={styles.modalTitle}>확인이 필요해요</Text>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.cardKicker}>로그인 안내</Text>
+                <Text style={styles.modalTitle}>확인이 필요해요</Text>
+              </View>
+              <Pressable
+                accessibilityLabel="로그인 안내 닫기"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
             </View>
-            <Pressable
-              accessibilityLabel="로그인 안내 닫기"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={onClose}
-              style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
-              <X size={19} color={palette.primaryDeep} />
-            </Pressable>
+            <Text style={styles.modalBody}>{message}</Text>
+            <ActionButton label="확인" fullWidth onPress={onClose} />
           </View>
-          <Text style={styles.modalBody}>{message}</Text>
-          <ActionButton label="확인" fullWidth onPress={onClose} />
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -430,6 +432,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     padding: spacing.md,
+  },
+  modalPressGuard: {
+    alignItems: 'center',
+    width: '100%',
   },
   modalPanel: {
     backgroundColor: palette.surface,

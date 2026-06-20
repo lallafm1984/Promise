@@ -246,6 +246,15 @@ export const mockPromiseRepository: PromiseRepository = {
         createdAt: card.createdAt,
       }));
   },
+  async getMobileSyncSnapshot() {
+    const now = new Date().toISOString();
+
+    return {
+      serverTime: now,
+      syncVersion: now,
+      hasChanges: true,
+    };
+  },
   async createManagedCard(card) {
     cards = [card, ...cards.filter((currentCard) => currentCard.id !== card.id)];
     return card;

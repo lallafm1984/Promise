@@ -7,12 +7,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { palette, radius, shadow, spacing } from '@/constants/theme';
 import { useManagedCards } from '@/hooks/useManagedCards';
+import { getAccountScopedStorageKey } from '@/lib/accountScopedStorage';
 import {
   getManagedCardResponseNoticeFingerprints,
   getSentResponseArrivalCards,
 } from '@/lib/cardMenu';
 
-const RESPONSE_NOTICE_STORAGE_KEY = '@whenbollae/manage/response-notice-dismissed-fingerprints';
+const RESPONSE_NOTICE_STORAGE_PREFIX = '@whenbollae/manage/response-notice-dismissed-fingerprints';
 
 export function GlobalResponseNotice() {
   const router = useRouter();
@@ -20,6 +21,10 @@ export function GlobalResponseNotice() {
   const { width } = useWindowDimensions();
   const { profile, managedCards } = useManagedCards();
   const [dismissedFingerprints, setDismissedFingerprints] = useState<string[] | null>();
+  const responseNoticeStorageKey = useMemo(
+    () => getAccountScopedStorageKey(RESPONSE_NOTICE_STORAGE_PREFIX, profile?.id ?? null),
+    [profile?.id],
+  );
   const now = useMemo(() => new Date(), [managedCards]);
   const noticeCards = useMemo(
     () => getSentResponseArrivalCards(managedCards, now, profile ?? undefined),
@@ -42,8 +47,9 @@ export function GlobalResponseNotice() {
 
   useEffect(() => {
     let isMounted = true;
+    setDismissedFingerprints(undefined);
 
-    AsyncStorage.getItem(RESPONSE_NOTICE_STORAGE_KEY)
+    AsyncStorage.getItem(responseNoticeStorageKey)
       .then((storedFingerprints) => {
         if (isMounted) {
           setDismissedFingerprints(parseDismissedFingerprints(storedFingerprints));
@@ -58,7 +64,7 @@ export function GlobalResponseNotice() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [responseNoticeStorageKey]);
 
   if (!shouldShow) {
     return null;
@@ -77,7 +83,7 @@ export function GlobalResponseNotice() {
     setDismissedFingerprints(nextDismissedFingerprints);
 
     try {
-      await AsyncStorage.setItem(RESPONSE_NOTICE_STORAGE_KEY, JSON.stringify(nextDismissedFingerprints));
+      await AsyncStorage.setItem(responseNoticeStorageKey, JSON.stringify(nextDismissedFingerprints));
     } catch {
       // The current session still stays dismissed even if storage is unavailable.
     }

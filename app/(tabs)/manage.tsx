@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { AlertTriangle, Link2, Send, Trash2, UsersRound, X } from 'lucide-react-native';
-import { Modal, Share, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Share, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DraftPreviewCard, ManagedCardsSection } from '@/components/card-menu';
 import { ActionButton, AppScreen, Card } from '@/components/ui';
@@ -10,15 +10,21 @@ import { palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
 import { useManagedCards } from '@/hooks/useManagedCards';
 import {
+  buildScheduleItemFromConfirmedCard,
   buildShareMessage,
   canDeleteManagedCard,
+  canDeleteResponseActionCard,
+  canHideReceivedManagedCard,
+  canHideManagedPastCard,
   canConfirmCandidateSlot,
   formatCandidateResponseSummary,
   getManagedCardInboxTab,
   getManagedCardResponseStats,
+  getManagedCardScope,
   getModeLabel,
   getPrimarySlot,
   getManagedStatusGroup,
+  getReceivedCardResponseBadges,
   getRecommendedConfirmationCandidate,
   getShareUrlForClipboard,
   type ManagedCardActionKind,
@@ -26,7 +32,15 @@ import {
   type ManagedCardScope,
   type ManagedStatusGroup,
 } from '@/lib/cardMenu';
-import { getConfirmedCardSchedulePath, getManagedCardDeleteConfirmation } from '@/lib/managedCards';
+import {
+  buildCardCancellationMessage,
+  filterManagedCardsByHiddenPastIds,
+  filterManagedCardsByHiddenReceivedReplyIds,
+  getConfirmedCardSchedulePath,
+  getManagedCardDeleteConfirmation,
+  getManagedPastCardHideConfirmation,
+  getReceivedReplyCardHideConfirmation,
+} from '@/lib/managedCards';
 import {
   UNSHAREABLE_PREVIEW_CARD_MESSAGE,
   isShareablePublicCard,
@@ -36,6 +50,7 @@ import type { CandidateSlot, Participant, PromiseCard, ReceivedCardResponseChoic
 
 type SelectableResponseChoice = Exclude<ReceivedCardResponseChoice, 'MAYBE'>;
 type QuickConfirmItem = { card: PromiseCard; suggestedCandidate: CandidateSlot };
+type DeleteModalActionVariant = 'secondary' | 'danger';
 
 const participantChoiceLabels: Record<ResponseChoice, string> = {
   YES: '가능',
@@ -73,6 +88,14 @@ function getParticipantCandidateChoice(participant: Participant, candidateId: st
   }
 
   return candidateCount === 1 ? participant.choice ?? 'UNANSWERED' : 'UNANSWERED';
+}
+
+function shouldHideManagedCardOnly(card: PromiseCard, now: Date): boolean {
+  return (
+    canHideReceivedManagedCard(card) ||
+    canHideManagedPastCard(card, now) ||
+    (getManagedCardScope(card) === 'SENT' && getManagedStatusGroup(card, now) === 'CONFIRMED')
+  );
 }
 
 function QuickConfirmCard({
@@ -223,18 +246,48 @@ function QuickConfirmCard({
   );
 }
 
+function DeleteModalButton({
+  disabled,
+  label,
+  onPress,
+  variant,
+}: {
+  disabled?: boolean;
+  label: string;
+  onPress: () => void;
+  variant: DeleteModalActionVariant;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.deleteActionButton,
+        variant === 'danger' ? styles.deleteDangerActionButton : styles.deleteSecondaryActionButton,
+        disabled && styles.disabledDeleteActionButton,
+        pressed && !disabled && styles.pressed,
+      ]}>
+      <Text
+        style={[
+          styles.deleteActionText,
+          variant === 'danger' ? styles.deleteDangerActionText : styles.deleteSecondaryActionText,
+          disabled && styles.disabledDeleteActionText,
+        ]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const scopeTabs: Array<{ key: ManagedCardScope; label: string }> = [
   { key: 'SENT', label: '보낸 카드' },
   { key: 'RECEIVED', label: '받은 카드' },
 ];
 
-const sentTabs: ManagedCardInboxTab[] = ['SENT_NO_RESPONSE', 'SENT_HAS_RESPONSE', 'SENT_CONFIRMED', 'SENT_PAST'];
-const receivedTabs: ManagedCardInboxTab[] = [
-  'RECEIVED_NEEDS_REPLY',
-  'RECEIVED_REPLIED',
-  'RECEIVED_CONFIRMED',
-  'RECEIVED_PAST',
-];
+const sentTabs: ManagedCardInboxTab[] = ['SENT_NO_RESPONSE', 'SENT_HAS_RESPONSE'];
+const receivedTabs: ManagedCardInboxTab[] = ['RECEIVED_NEEDS_REPLY', 'RECEIVED_REPLIED'];
 
 const tabsByScope: Record<ManagedCardScope, ManagedCardInboxTab[]> = {
   SENT: sentTabs,
@@ -276,12 +329,10 @@ const emptyCopyByTab: Record<ManagedCardInboxTab, { title: string; body: string 
   },
 };
 
-const legacyGroupTabs: Record<ManagedStatusGroup, ManagedCardInboxTab> = {
+const legacyGroupTabs: Partial<Record<ManagedStatusGroup, ManagedCardInboxTab>> = {
   PENDING: 'SENT_NO_RESPONSE',
   VOTING: 'SENT_NO_RESPONSE',
   DECLINED: 'SENT_HAS_RESPONSE',
-  CONFIRMED: 'SENT_CONFIRMED',
-  PAST: 'SENT_PAST',
 };
 
 function getScopeForTab(tab: ManagedCardInboxTab): ManagedCardScope {
@@ -317,9 +368,13 @@ export default function ManageCardsScreen() {
   const {
     profile,
     managedCards,
+    hiddenPastCardIds,
+    hiddenReceivedReplyCardIds,
     isLoading,
     error,
     removeManagedCard,
+    hideManagedPastCard,
+    hideReceivedRepliedCard,
     sendManagedCardToRecipients,
     confirmManagedCard,
     respondToReceivedCard,
@@ -338,6 +393,7 @@ export default function ManageCardsScreen() {
   const [reshareFeedback, setReshareFeedback] = useState<string | null>(null);
   const [isDeletingCard, setIsDeletingCard] = useState(false);
   const [responseChoices, setResponseChoices] = useState<Record<string, SelectableResponseChoice>>({});
+  const [responseComment, setResponseComment] = useState('');
   const [selectedQuickCandidateIds, setSelectedQuickCandidateIds] = useState<Record<string, string>>({});
   const [isConfirming, setIsConfirming] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
@@ -368,6 +424,9 @@ export default function ManageCardsScreen() {
 
     if (routeGroup && routeGroup in legacyGroupTabs) {
       const nextTab = legacyGroupTabs[routeGroup as ManagedStatusGroup];
+      if (!nextTab) {
+        return;
+      }
       setActiveScope(getScopeForTab(nextTab));
       setActiveTab(nextTab);
     }
@@ -378,15 +437,26 @@ export default function ManageCardsScreen() {
       activeTabKeys.reduce(
         (counts, tab) => ({
           ...counts,
-          [tab]: managedCards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === tab).length,
+          [tab]: filterManagedCardsByHiddenReceivedReplyIds(
+            filterManagedCardsByHiddenPastIds(managedCards, hiddenPastCardIds, now),
+            hiddenReceivedReplyCardIds,
+            now,
+            currentProfile,
+          ).filter((card) => getManagedCardInboxTab(card, now, currentProfile) === tab).length,
         }),
         {} as Partial<Record<ManagedCardInboxTab, number>>,
       ),
-    [activeTabKeys, currentProfile, managedCards, now],
+    [activeTabKeys, currentProfile, hiddenPastCardIds, hiddenReceivedReplyCardIds, managedCards, now],
   );
   const visibleManagedCards = useMemo(
-    () => managedCards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === activeTab),
-    [activeTab, currentProfile, managedCards, now],
+    () =>
+      filterManagedCardsByHiddenReceivedReplyIds(
+        filterManagedCardsByHiddenPastIds(managedCards, hiddenPastCardIds, now),
+        hiddenReceivedReplyCardIds,
+        now,
+        currentProfile,
+      ).filter((card) => getManagedCardInboxTab(card, now, currentProfile) === activeTab),
+    [activeTab, currentProfile, hiddenPastCardIds, hiddenReceivedReplyCardIds, managedCards, now],
   );
   const visibleResponseActionItems = useMemo(
     () =>
@@ -417,6 +487,7 @@ export default function ManageCardsScreen() {
     if (action === 'OPEN_RECEIVED') {
       setResponseCard(card);
       setResponseChoices({});
+      setResponseComment('');
       return;
     }
 
@@ -442,7 +513,12 @@ export default function ManageCardsScreen() {
   }
 
   async function handleDeleteCard(card: PromiseCard) {
-    if (!canDeleteManagedCard(card, now)) {
+    if (
+      !canDeleteManagedCard(card, now) &&
+      !canDeleteResponseActionCard(card, now, currentProfile) &&
+      !canHideReceivedManagedCard(card) &&
+      !canHideManagedPastCard(card, now)
+    ) {
       return;
     }
 
@@ -464,7 +540,43 @@ export default function ManageCardsScreen() {
 
     try {
       setIsDeletingCard(true);
-      await removeManagedCard(deleteConfirmCard.id);
+      if (canHideReceivedManagedCard(deleteConfirmCard)) {
+        hideReceivedRepliedCard(deleteConfirmCard, now, currentProfile);
+      } else if (shouldHideManagedCardOnly(deleteConfirmCard, now)) {
+        hideManagedPastCard(deleteConfirmCard, now);
+      } else {
+        await removeManagedCard(deleteConfirmCard.id);
+      }
+      setDeleteConfirmCard(null);
+    } finally {
+      setIsDeletingCard(false);
+    }
+  }
+
+  async function confirmShareAndDeleteCard() {
+    if (!deleteConfirmCard) {
+      return;
+    }
+
+    const card = deleteConfirmCard;
+    const scheduleItem = buildScheduleItemFromConfirmedCard(card) ?? {
+      title: card.title,
+      dateLabel: '확정 일정',
+      timeLabel: '시간 확인 필요',
+      location: card.location,
+    };
+
+    try {
+      setIsDeletingCard(true);
+      const shareResult = await Share.share({
+        message: buildCardCancellationMessage(scheduleItem),
+      });
+
+      if (shareResult.action === Share.dismissedAction) {
+        return;
+      }
+
+      await removeManagedCard(card.id);
       setDeleteConfirmCard(null);
     } finally {
       setIsDeletingCard(false);
@@ -569,14 +681,16 @@ export default function ManageCardsScreen() {
     setIsConfirming(true);
 
     try {
-      await confirmManagedCard(card.id, candidateId);
+      const confirmedCard = await confirmManagedCard(card.id, candidateId);
       setSelectedQuickCandidateIds((currentCandidateIds) => {
         const nextCandidateIds = { ...currentCandidateIds };
         delete nextCandidateIds[card.id];
         return nextCandidateIds;
       });
       setResultCard(null);
-      selectTab('SENT_CONFIRMED');
+      selectTab(sentTabs[0]);
+      await reloadManagedCards({ force: true });
+      router.push(getConfirmedCardSchedulePath(confirmedCard));
     } catch {
       return;
     } finally {
@@ -603,9 +717,9 @@ export default function ManageCardsScreen() {
     setIsResponding(true);
 
     try {
-      const respondedCard = await respondToReceivedCard(responseCard.id, responses);
+      const respondedCard = await respondToReceivedCard(responseCard.id, responses, responseComment);
       selectTab(getManagedCardInboxTab(respondedCard, now, currentProfile));
-      setResponseCard(null);
+      closeResponseModal();
     } catch {
       return;
     } finally {
@@ -620,6 +734,12 @@ export default function ManageCardsScreen() {
     }));
   }
 
+  function closeResponseModal() {
+    setResponseCard(null);
+    setResponseChoices({});
+    setResponseComment('');
+  }
+
   function selectQuickConfirmCandidate(cardId: string, candidateId: string) {
     setSelectedQuickCandidateIds((currentCandidateIds) => ({
       ...currentCandidateIds,
@@ -628,13 +748,23 @@ export default function ManageCardsScreen() {
   }
 
   const responseGroup = responseCard ? getManagedStatusGroup(responseCard, now) : null;
-  const canRespond = responseCard ? responseGroup === 'PENDING' || responseGroup === 'VOTING' : false;
+  const responseBadges = responseCard ? getReceivedCardResponseBadges(responseCard, currentProfile) : [];
+  const canRespond = responseCard ? (responseGroup === 'PENDING' || responseGroup === 'VOTING') && responseBadges.length === 0 : false;
   const hasAllResponseChoices = responseCard
     ? responseCard.candidates.every((candidate) => Boolean(responseChoices[candidate.id]))
     : false;
   const resultGroup = resultCard ? getManagedStatusGroup(resultCard, now) : null;
   const canConfirmResult = resultGroup === 'PENDING' || resultGroup === 'VOTING';
-  const deleteConfirmation = deleteConfirmCard ? getManagedCardDeleteConfirmation(deleteConfirmCard) : null;
+  const deleteConfirmation = deleteConfirmCard
+    ? canHideReceivedManagedCard(deleteConfirmCard)
+      ? getReceivedReplyCardHideConfirmation()
+      : shouldHideManagedCardOnly(deleteConfirmCard, now)
+        ? getManagedPastCardHideConfirmation(deleteConfirmCard)
+        : getManagedCardDeleteConfirmation(deleteConfirmCard)
+    : null;
+  const hasScheduleDeleteActions = Boolean(
+    deleteConfirmation?.directDeleteLabel && deleteConfirmation.shareDeleteLabel,
+  );
   const routeScrollKey = Array.isArray(scroll) ? scroll[0] : scroll;
 
   return (
@@ -709,7 +839,7 @@ export default function ManageCardsScreen() {
               suggestedCandidate={suggestedCandidate}
               selectedCandidateId={selectedQuickCandidateIds[card.id]}
               disabled={isConfirming}
-              canDelete={canDeleteManagedCard(card, now)}
+              canDelete={canDeleteResponseActionCard(card, now, currentProfile)}
               onSelectCandidate={(candidateId) => selectQuickConfirmCandidate(card.id, candidateId)}
               onConfirm={(candidateId) => void handleConfirmCandidate(card, candidateId)}
               onOpenResults={() => setResultCard(card)}
@@ -745,21 +875,46 @@ export default function ManageCardsScreen() {
                   <Text style={styles.resultTitle}>{deleteConfirmation.title}</Text>
                   <Text style={styles.deleteBody}>{deleteConfirmation.body}</Text>
                 </View>
-                <View style={styles.deleteActions}>
-                  <ActionButton
-                    label="취소"
-                    variant="secondary"
-                    disabled={isDeletingCard}
-                    fullWidth
-                    onPress={closeDeleteConfirmModal}
-                  />
-                  <ActionButton
-                    label={isDeletingCard ? '삭제 중' : deleteConfirmation.confirmLabel}
-                    variant="danger"
-                    disabled={isDeletingCard}
-                    fullWidth
-                    onPress={() => void confirmDeleteCard()}
-                  />
+                <View style={[styles.deleteActions, hasScheduleDeleteActions && styles.scheduleDeleteActions]}>
+                  {hasScheduleDeleteActions ? (
+                    <>
+                      <DeleteModalButton
+                        label="취소"
+                        variant="secondary"
+                        disabled={isDeletingCard}
+                        onPress={closeDeleteConfirmModal}
+                      />
+                      <DeleteModalButton
+                        label={isDeletingCard ? '삭제 중' : deleteConfirmation.directDeleteLabel ?? deleteConfirmation.confirmLabel}
+                        variant="danger"
+                        disabled={isDeletingCard}
+                        onPress={() => void confirmDeleteCard()}
+                      />
+                      <DeleteModalButton
+                        label={isDeletingCard ? '삭제 중' : deleteConfirmation.shareDeleteLabel ?? deleteConfirmation.confirmLabel}
+                        variant="danger"
+                        disabled={isDeletingCard}
+                        onPress={() => void confirmShareAndDeleteCard()}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <ActionButton
+                        label="취소"
+                        variant="secondary"
+                        disabled={isDeletingCard}
+                        fullWidth
+                        onPress={closeDeleteConfirmModal}
+                      />
+                      <ActionButton
+                        label={isDeletingCard ? '삭제 중' : deleteConfirmation.confirmLabel}
+                        variant="danger"
+                        disabled={isDeletingCard}
+                        fullWidth
+                        onPress={() => void confirmDeleteCard()}
+                      />
+                    </>
+                  )}
                 </View>
               </Card>
             </Pressable>
@@ -1017,12 +1172,12 @@ export default function ManageCardsScreen() {
         </View>
       </Modal>
 
-      <Modal transparent visible={Boolean(responseCard)} animationType="fade" onRequestClose={() => setResponseCard(null)}>
+      <Modal transparent visible={Boolean(responseCard)} animationType="fade" onRequestClose={closeResponseModal}>
         <View
           style={[styles.modalBackdrop, styles.resultModalBackdrop]}
           onTouchEnd={(event) => {
             if (event.target === event.currentTarget) {
-              setResponseCard(null);
+              closeResponseModal();
             }
           }}>
           {responseCard ? (
@@ -1037,7 +1192,7 @@ export default function ManageCardsScreen() {
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => setResponseCard(null)}
+                  onPress={closeResponseModal}
                   style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
                   <Text style={styles.closeButtonText}>닫기</Text>
                 </Pressable>
@@ -1074,6 +1229,23 @@ export default function ManageCardsScreen() {
                 </View>
 
                 {canRespond ? (
+                  <View style={styles.responseCommentShell}>
+                    <Text style={styles.responseCommentLabel}>한마디</Text>
+                    <TextInput
+                      accessibilityLabel="한마디"
+                      maxLength={120}
+                      multiline
+                      onChangeText={setResponseComment}
+                      placeholder="친구에게 전할 말을 적어주세요"
+                      placeholderTextColor={palette.inkSoft}
+                      style={styles.responseCommentInput}
+                      value={responseComment}
+                    />
+                  </View>
+                ) : null}
+
+                {responseBadges.length > 0 ? <ResponseBadgeSummary badges={responseBadges} /> : null}
+                {canRespond ? (
                   <ActionButton
                     label={isResponding ? '응답 중' : '응답 보내기'}
                     variant="primary"
@@ -1081,7 +1253,7 @@ export default function ManageCardsScreen() {
                     fullWidth
                     onPress={() => void handleSubmitResponse()}
                   />
-                ) : (
+                ) : responseBadges.length > 0 ? null : (
                   <Text style={styles.responseClosedText}>지난 카드는 내용을 확인만 할 수 있어요.</Text>
                 )}
               </ScrollView>
@@ -1110,6 +1282,23 @@ function ResponseChoiceButton({
       style={({ pressed }) => [styles.responseChoiceButton, selected && styles.selectedResponseChoiceButton, pressed && styles.pressed]}>
       <Text style={[styles.responseChoiceText, selected && styles.selectedResponseChoiceText]}>{label}</Text>
     </Pressable>
+  );
+}
+
+function ResponseBadgeSummary({ badges }: { badges: ReturnType<typeof getReceivedCardResponseBadges> }) {
+  return (
+    <View style={styles.responseBadgeSummary}>
+      <Text style={styles.responseBadgeSummaryLabel}>내 답장</Text>
+      <View style={styles.responseBadgeList}>
+        {badges.map((badge) => (
+          <View key={badge.key} style={[styles.respondentChoiceBadge, getParticipantChoiceBadgeStyle(badge.choice)]}>
+            <Text style={styles.respondentChoiceText} numberOfLines={1}>
+              {badge.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -1585,6 +1774,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  scheduleDeleteActions: {
+    gap: spacing.xs,
+  },
+  deleteActionButton: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: spacing.xs,
+  },
+  deleteSecondaryActionButton: {
+    backgroundColor: palette.surface,
+  },
+  deleteDangerActionButton: {
+    backgroundColor: palette.coralSoft,
+  },
+  disabledDeleteActionButton: {
+    backgroundColor: palette.paper,
+    borderColor: palette.line,
+  },
+  deleteActionText: {
+    fontSize: 13,
+    fontWeight: '900',
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  deleteSecondaryActionText: {
+    color: palette.ink,
+  },
+  deleteDangerActionText: {
+    color: palette.primaryDeep,
+  },
+  disabledDeleteActionText: {
+    color: palette.inkSoft,
+  },
   reshareHeader: {
     alignItems: 'flex-start',
     flexDirection: 'row',
@@ -1970,6 +2197,52 @@ const styles = StyleSheet.create({
   },
   selectedResponseChoiceText: {
     color: palette.onLight,
+  },
+  responseCommentShell: {
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  responseCommentLabel: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  responseCommentInput: {
+    color: palette.ink,
+    fontSize: 14,
+    fontWeight: '800',
+    minHeight: 58,
+    padding: 0,
+    textAlignVertical: 'top',
+  },
+  responseBadgeSummary: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  responseBadgeSummaryLabel: {
+    color: palette.primaryDeep,
+    flexShrink: 0,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  responseBadgeList: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    minWidth: 0,
   },
   responseClosedText: {
     backgroundColor: palette.amberSoft,

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CARD_CORE_CHANGE_POLICY,
   buildCardCancellationMessage,
+  getCardScheduleDeleteConfirmation,
   filterScheduleItemsByRemovedCardIds,
   mergeManagedCardIntoLocalCards,
   mergeManagedCardsView,
@@ -11,9 +12,15 @@ import {
   getDeliveredCardManagePath,
   getConfirmedCardSchedulePath,
   getManagedCardDeleteConfirmation,
+  getManagedPastCardHideConfirmation,
   getRecentReceivedCardStatuses,
+  getReceivedReplyCardHideConfirmation,
   getScheduleCardManageGroup,
   getScheduleCardManagePath,
+  hideManagedPastCardFromLocalState,
+  hideReceivedRepliedCardFromLocalState,
+  filterManagedCardsByHiddenPastIds,
+  filterManagedCardsByHiddenReceivedReplyIds,
   removeManagedCardFromLocalState,
 } from './managedCards';
 import type { PromiseCard, ScheduleItem } from '@/types/promise';
@@ -68,6 +75,133 @@ describe('managed card local state', () => {
 
     expect(managedCards).toEqual([refreshedDeclinedCard]);
     expect(managedCards[0].status).toBe('DECLINED');
+  });
+
+  it('keeps a local received reply when the cached remote card has not caught up yet', () => {
+    const staleRemoteCard = {
+      ...buildCard('received-card', 'PENDING'),
+      requesterName: 'sender',
+      candidates: [
+        {
+          id: 'slot-1',
+          startsAt: '2026-06-20T10:00:00.000Z',
+          endsAt: '2026-06-20T11:00:00.000Z',
+          label: '6월 20일 19:00',
+          shortLabel: '6/20',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+        },
+      ],
+      participants: [],
+    };
+    const localNoReplyCard = {
+      ...staleRemoteCard,
+      candidates: [
+        {
+          ...staleRemoteCard.candidates[0],
+          summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 },
+        },
+      ],
+      participants: [
+        {
+          id: 'host-minseo',
+          name: '민',
+          displayName: '민서',
+          color: '#FFD6E7',
+          choice: 'NO' as const,
+          responses: [{ candidateId: 'slot-1', choice: 'NO' as const }],
+        },
+      ],
+    };
+
+    const managedCards = mergeManagedCardsView([localNoReplyCard], [staleRemoteCard], []);
+
+    expect(managedCards).toEqual([localNoReplyCard]);
+  });
+
+  it('uses the refreshed server card when received card candidates changed after an edit', () => {
+    const localNoReplyCard = {
+      ...buildCard('received-card', 'PENDING'),
+      requesterName: 'sender',
+      candidates: [
+        {
+          id: 'old-slot',
+          startsAt: '2026-06-20T10:00:00.000Z',
+          endsAt: '2026-06-20T11:00:00.000Z',
+          label: '6월 20일 19:00',
+          shortLabel: '6/20',
+          summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 },
+        },
+      ],
+      participants: [
+        {
+          id: 'host-minseo',
+          name: '민',
+          displayName: '민서',
+          color: '#FFD6E7',
+          choice: 'NO' as const,
+          responses: [{ candidateId: 'old-slot', choice: 'NO' as const }],
+        },
+      ],
+    };
+    const refreshedCard = {
+      ...localNoReplyCard,
+      candidates: [
+        {
+          ...localNoReplyCard.candidates[0],
+          id: 'new-slot',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+        },
+      ],
+      participants: [],
+    };
+
+    const managedCards = mergeManagedCardsView([localNoReplyCard], [refreshedCard], []);
+
+    expect(managedCards).toEqual([refreshedCard]);
+  });
+
+  it('uses the refreshed server card when a received card keeps a candidate id but changes the time', () => {
+    const localNoReplyCard = {
+      ...buildCard('received-card', 'PENDING'),
+      requesterName: 'sender',
+      candidates: [
+        {
+          id: 'slot-1',
+          startsAt: '2026-06-20T10:00:00.000Z',
+          endsAt: '2026-06-20T11:00:00.000Z',
+          label: '6월 20일 19:00',
+          shortLabel: '6/20',
+          summary: { yes: 0, maybe: 0, no: 1, unanswered: 0 },
+        },
+      ],
+      participants: [
+        {
+          id: 'host-minseo',
+          name: '민',
+          displayName: '민서',
+          color: '#FFD6E7',
+          choice: 'NO' as const,
+          responses: [{ candidateId: 'slot-1', choice: 'NO' as const }],
+        },
+      ],
+    };
+    const refreshedCard = {
+      ...localNoReplyCard,
+      candidates: [
+        {
+          ...localNoReplyCard.candidates[0],
+          startsAt: '2026-06-21T10:00:00.000Z',
+          endsAt: '2026-06-21T11:00:00.000Z',
+          label: '6월 21일 19:00',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 1 },
+        },
+      ],
+      participants: [],
+    };
+
+    const managedCards = mergeManagedCardsView([localNoReplyCard], [refreshedCard], []);
+
+    expect(managedCards).toEqual([refreshedCard]);
   });
 
   it('replaces an optimistic card with the saved card without leaving duplicates', () => {
@@ -125,6 +259,107 @@ describe('managed card local state', () => {
     );
   });
 
+  it('hides past appointments from manage without marking their schedules as removed', () => {
+    const pastCard = {
+      ...buildCard('past-card', 'CONFIRMED'),
+      candidates: [
+        {
+          id: 'past-slot',
+          startsAt: '2026-06-16T10:00:00.000Z',
+          endsAt: '2026-06-16T11:00:00.000Z',
+          label: '6월 16일 19:00',
+          shortLabel: '6월 16일',
+          summary: { yes: 0, maybe: 0, no: 0, unanswered: 0 },
+        },
+      ],
+    };
+    const futureCard = {
+      ...pastCard,
+      id: 'future-card',
+      candidates: [{ ...pastCard.candidates[0], startsAt: '2026-06-20T10:00:00.000Z' }],
+    };
+    const hiddenState = hideManagedPastCardFromLocalState([], pastCard, new Date('2026-06-18T10:00:00.000Z'));
+
+    expect(hiddenState.hiddenPastCardIds).toEqual(['past-card']);
+    expect(hiddenState.removedCardIds).toEqual([]);
+    expect(filterManagedCardsByHiddenPastIds([pastCard, futureCard], hiddenState.hiddenPastCardIds, new Date('2026-06-18T10:00:00.000Z'))).toEqual([
+      futureCard,
+    ]);
+    expect(filterScheduleItemsByRemovedCardIds([buildScheduleItem('2026-06-16T10:00:00.000Z')], hiddenState.removedCardIds)).toHaveLength(1);
+
+    const futureHiddenState = hideManagedPastCardFromLocalState([], futureCard, new Date('2026-06-18T10:00:00.000Z'));
+
+    expect(futureHiddenState.hiddenPastCardIds).toEqual(['future-card']);
+    expect(futureHiddenState.removedCardIds).toEqual([]);
+    expect(filterManagedCardsByHiddenPastIds([futureCard], futureHiddenState.hiddenPastCardIds, new Date('2026-06-18T10:00:00.000Z'))).toEqual([]);
+    expect(filterScheduleItemsByRemovedCardIds([buildScheduleItem('2026-06-20T10:00:00.000Z')], futureHiddenState.removedCardIds)).toHaveLength(1);
+  });
+
+  it('hides received cards across received tabs without marking schedules removed', () => {
+    const currentProfile = { id: 'profile-minseo', displayName: '민서' };
+    const repliedCard: PromiseCard = {
+      ...buildCard('received-replied-card', 'PENDING'),
+      requesterName: '하린',
+      participants: [
+        {
+          id: currentProfile.id,
+          name: '민',
+          displayName: currentProfile.displayName,
+          color: '#FFD6E7',
+          choice: 'NO',
+        },
+      ],
+    };
+    const confirmedCard: PromiseCard = {
+      ...repliedCard,
+      status: 'CONFIRMED',
+    };
+    const visibleNeedsReplyCard: PromiseCard = {
+      ...buildCard('needs-reply-card', 'PENDING'),
+      requesterName: '하린',
+      participants: [],
+    };
+    const hiddenState = hideReceivedRepliedCardFromLocalState([], repliedCard, new Date('2026-06-18T10:00:00.000Z'), currentProfile);
+
+    expect(hiddenState.hiddenReceivedReplyCardIds).toEqual([repliedCard.id]);
+    expect(hiddenState.removedCardIds).toEqual([]);
+    expect(
+      filterManagedCardsByHiddenReceivedReplyIds(
+        [repliedCard, visibleNeedsReplyCard],
+        hiddenState.hiddenReceivedReplyCardIds,
+        new Date('2026-06-18T10:00:00.000Z'),
+        currentProfile,
+      ),
+    ).toEqual([visibleNeedsReplyCard]);
+    expect(
+      filterManagedCardsByHiddenReceivedReplyIds(
+        [confirmedCard],
+        hiddenState.hiddenReceivedReplyCardIds,
+        new Date('2026-06-18T10:00:00.000Z'),
+        currentProfile,
+      ),
+    ).toEqual([]);
+
+    const hiddenNeedsReplyState = hideReceivedRepliedCardFromLocalState(
+      [],
+      visibleNeedsReplyCard,
+      new Date('2026-06-18T10:00:00.000Z'),
+      currentProfile,
+    );
+
+    expect(hiddenNeedsReplyState.hiddenReceivedReplyCardIds).toEqual([visibleNeedsReplyCard.id]);
+    expect(hiddenNeedsReplyState.removedCardIds).toEqual([]);
+    expect(
+      filterManagedCardsByHiddenReceivedReplyIds(
+        [visibleNeedsReplyCard],
+        hiddenNeedsReplyState.hiddenReceivedReplyCardIds,
+        new Date('2026-06-18T10:00:00.000Z'),
+        currentProfile,
+      ),
+    ).toEqual([]);
+    expect(filterScheduleItemsByRemovedCardIds([buildScheduleItem('2026-06-20T10:00:00.000Z')], hiddenState.removedCardIds)).toHaveLength(1);
+  });
+
   it('targets confirmed or past manage tabs from a card schedule item', () => {
     const now = new Date('2026-06-18T10:00:00.000Z');
 
@@ -171,6 +406,48 @@ describe('managed card local state', () => {
       title: '카드 취소',
       body: 'dinner-card card 카드를 취소하고 관리함에서 제거할까요?',
       confirmLabel: '취소하기',
+    });
+  });
+
+  it('builds confirmation copy before hiding a past managed card', () => {
+    expect(getManagedPastCardHideConfirmation(buildCard('past-card', 'CONFIRMED'))).toEqual({
+      title: '카드 삭제',
+      body: '관리함에서 카드만 삭제할까요? 일정에는 영향을 주지 않아요.',
+      confirmLabel: '삭제',
+    });
+  });
+
+  it('builds confirmation copy before hiding a replied received card', () => {
+    expect(getReceivedReplyCardHideConfirmation()).toEqual({
+      title: '카드 삭제',
+      body: '관리함에서 카드만 삭제할까요? 일정에는 영향을 주지 않아요.',
+      confirmLabel: '삭제',
+    });
+  });
+
+  it('builds delete-only confirmation copy for confirmed card schedules', () => {
+    expect(getCardScheduleDeleteConfirmation({ title: '6월 20일 19:00에 성수에서 볼래?' })).toEqual({
+      title: '일정 삭제',
+      body: '"6월 20일 19:00에 성수에서 볼래?" 약속카드를 삭제할까요?',
+      confirmLabel: '삭제',
+    });
+    expect(getManagedCardDeleteConfirmation(buildCard('confirmed-card', 'CONFIRMED'))).toEqual({
+      title: '카드 삭제',
+      body: '관리함에서 카드만 삭제할까요? 일정에는 영향을 주지 않아요.',
+      confirmLabel: '삭제',
+    });
+  });
+
+  it('builds a delete-only confirmation for past card schedules', () => {
+    expect(
+      getCardScheduleDeleteConfirmation(
+        { title: '6월 20일 19:00에 성수에서 볼래?', startsAt: '2026-06-16T10:00:00.000Z' },
+        new Date('2026-06-18T10:00:00.000Z'),
+      ),
+    ).toEqual({
+      title: '일정 삭제',
+      body: '지난 약속을 삭제할까요?',
+      confirmLabel: '삭제',
     });
   });
 

@@ -18,7 +18,7 @@ describe('preview friend test options', () => {
     const result = getPreviewFriendOptions([]);
 
     expect(result.isUsingTestFriends).toBe(true);
-    expect(result.options.length).toBeGreaterThan(0);
+    expect(result.options).toHaveLength(12);
     expect(result.options[0].id).toMatch(/^test-friend-/);
   });
 

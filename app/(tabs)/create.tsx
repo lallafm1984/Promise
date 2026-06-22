@@ -1,6 +1,6 @@
-import { createElement, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createElement, useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { AlertTriangle, Link2, MapPin, MessageCircle, Send, UsersRound, X } from 'lucide-react-native';
 import { Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -55,7 +55,7 @@ export default function CreateCardScreen() {
   const screenScrollRef = useRef<ScrollView>(null);
   const messageInputRef = useRef<TextInput>(null);
   const { addManagedCard } = useManagedCards();
-  const { friends, isLoading: isFriendsLoading } = useFriends();
+  const { friends, isLoading: isFriendsLoading, reload: reloadFriends } = useFriends();
   const [mode, setMode] = useState<AppointmentMode>(INITIAL_DRAFT.mode);
   const [times, setTimes] = useState<string[]>(INITIAL_DRAFT.times);
   const [location, setLocation] = useState(INITIAL_DRAFT.location);
@@ -92,6 +92,11 @@ export default function CreateCardScreen() {
   const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
     () => getPreviewFriendOptions(friends),
     [friends],
+  );
+  useFocusEffect(
+    useCallback(() => {
+      void reloadFriends();
+    }, [reloadFriends]),
   );
 
   function handleModeChange(nextMode: AppointmentMode) {

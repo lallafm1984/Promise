@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 
 import { getActiveFriendRepository } from '@/data/friendRepository';
 import { getActivePromiseRepository } from '@/data/promiseRepository';
+import { getAccountScopedStorageKey } from '@/lib/accountScopedStorage';
 import { supabase } from '@/lib/supabase';
 import {
   buildCardReceivedNotification,
@@ -23,11 +24,11 @@ import {
 import type { AppNotificationPermissionStatus } from '@/lib/notificationStatus';
 import type { HostProfile, ScheduleItem } from '@/types/promise';
 
-const NOTIFICATION_ENABLED_KEY = 'whenbollae:notifications:enabled';
-const SEEN_FRIEND_REQUEST_IDS_KEY = 'whenbollae:notifications:seen-friend-request-ids';
-const SEEN_FRIEND_IDS_KEY = 'whenbollae:notifications:seen-friend-ids';
-const SEEN_CARD_IDS_KEY = 'whenbollae:notifications:seen-card-ids';
-const REMINDER_IDS_KEY = 'whenbollae:notifications:reminder-ids';
+const NOTIFICATION_ENABLED_PREFIX = 'whenbollae:notifications:enabled';
+const SEEN_FRIEND_REQUEST_IDS_PREFIX = 'whenbollae:notifications:seen-friend-request-ids';
+const SEEN_FRIEND_IDS_PREFIX = 'whenbollae:notifications:seen-friend-ids';
+const SEEN_CARD_IDS_PREFIX = 'whenbollae:notifications:seen-card-ids';
+const REMINDER_IDS_PREFIX = 'whenbollae:notifications:reminder-ids';
 const EXPO_PUSH_TOKEN_KEY = 'whenbollae:notifications:expo-push-token';
 
 const DEFAULT_CHANNEL_ID = 'whenbollae-default';
@@ -39,6 +40,28 @@ let appointmentReminderScheduleQueue: Promise<void> = Promise.resolve();
 export interface AppNotificationSettingsSnapshot {
   enabled: boolean;
   permissionStatus: AppNotificationPermissionStatus;
+}
+
+async function getNotificationAccountId() {
+  const authSession = await supabase?.auth.getSession();
+
+  return authSession?.data.session?.user.id ?? null;
+}
+
+function getNotificationStorageKey(prefix: string, accountId: string | null) {
+  return getAccountScopedStorageKey(prefix, accountId);
+}
+
+async function getCurrentNotificationStorageKey(prefix: string) {
+  return getNotificationStorageKey(prefix, await getNotificationAccountId());
+}
+
+function getSocialNotificationStorageKeys(accountId: string | null) {
+  return {
+    seenFriendRequestIds: getNotificationStorageKey(SEEN_FRIEND_REQUEST_IDS_PREFIX, accountId),
+    seenFriendIds: getNotificationStorageKey(SEEN_FRIEND_IDS_PREFIX, accountId),
+    seenCardIds: getNotificationStorageKey(SEEN_CARD_IDS_PREFIX, accountId),
+  };
 }
 
 function readJsonArray(value: string | null): string[] {
@@ -105,6 +128,11 @@ async function registerPushTokenIfPossible() {
 
   try {
     const token = await Notifications.getExpoPushTokenAsync({ projectId });
+    await supabase.rpc('register_notification_token', {
+      notification_provider: 'expo',
+      notification_token: token.data,
+      notification_device_label: `${Platform.OS} ${Constants.deviceName ?? 'device'}`,
+    });
     const { error } = await supabase.from('notification_tokens').upsert(
       {
         user_id: userId,
@@ -124,6 +152,62 @@ async function registerPushTokenIfPossible() {
   } catch {
     return null;
   }
+}
+
+export async function installSocialNotificationRealtimeRefresh(refresh = checkSocialNotifications) {
+  if (Platform.OS === 'web' || !supabase) {
+    return () => undefined;
+  }
+
+  const accountId = await getNotificationAccountId();
+
+  if (!accountId) {
+    return () => undefined;
+  }
+
+  const channel = supabase
+    .channel(`whenbollae-social-notifications-${accountId}-${Date.now()}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'card_recipients',
+        filter: `recipient_profile_id=eq.${accountId}`,
+      },
+      () => {
+        void refresh();
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'friend_requests',
+        filter: `addressee_id=eq.${accountId}`,
+      },
+      () => {
+        void refresh();
+      },
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'friend_requests',
+        filter: `requester_id=eq.${accountId}`,
+      },
+      () => {
+        void refresh();
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void channel.unsubscribe();
+  };
 }
 
 async function unregisterPushTokenIfPossible() {
@@ -183,7 +267,7 @@ export async function configureAppNotifications() {
 }
 
 export async function isAppNotificationEnabled() {
-  return (await AsyncStorage.getItem(NOTIFICATION_ENABLED_KEY)) === 'true';
+  return (await AsyncStorage.getItem(await getCurrentNotificationStorageKey(NOTIFICATION_ENABLED_PREFIX))) === 'true';
 }
 
 export async function getAppNotificationPermissionStatus(): Promise<AppNotificationPermissionStatus> {
@@ -201,7 +285,7 @@ export async function getAppNotificationPermissionStatus(): Promise<AppNotificat
 }
 
 export async function setAppNotificationEnabled(enabled: boolean) {
-  await AsyncStorage.setItem(NOTIFICATION_ENABLED_KEY, enabled ? 'true' : 'false');
+  await AsyncStorage.setItem(await getCurrentNotificationStorageKey(NOTIFICATION_ENABLED_PREFIX), enabled ? 'true' : 'false');
 }
 
 export async function getAppNotificationSettingsSnapshot(): Promise<AppNotificationSettingsSnapshot> {
@@ -258,7 +342,8 @@ export async function syncPushTokenRegistration() {
 
 export async function disableAppNotifications() {
   let cleanupError: unknown = null;
-  const reminderIds = readJsonMap(await AsyncStorage.getItem(REMINDER_IDS_KEY));
+  const reminderIdsKey = await getCurrentNotificationStorageKey(REMINDER_IDS_PREFIX);
+  const reminderIds = readJsonMap(await AsyncStorage.getItem(reminderIdsKey));
 
   try {
     await Promise.all(
@@ -272,7 +357,7 @@ export async function disableAppNotifications() {
   }
 
   try {
-    await AsyncStorage.removeItem(REMINDER_IDS_KEY);
+    await AsyncStorage.removeItem(reminderIdsKey);
   } catch (error) {
     cleanupError = cleanupError ?? error;
   }
@@ -349,6 +434,8 @@ async function pruneStaleAppointmentReminderNotifications(activeReminderIds: Rem
 }
 
 export async function seedCurrentSocialNotificationState() {
+  const accountId = await getNotificationAccountId();
+  const seenKeys = getSocialNotificationStorageKeys(accountId);
   const [{ repository: friendRepository }, { repository: promiseRepository }] = await Promise.all([
     getActiveFriendRepository(),
     getActivePromiseRepository(),
@@ -363,10 +450,10 @@ export async function seedCurrentSocialNotificationState() {
   const friendIds = friendState.friends.map((friend) => friend.id);
 
   await Promise.all([
-    writeJsonArray(SEEN_FRIEND_REQUEST_IDS_KEY, incomingRequestIds),
-    writeJsonArray(SEEN_FRIEND_IDS_KEY, friendIds),
+    writeJsonArray(seenKeys.seenFriendRequestIds, incomingRequestIds),
+    writeJsonArray(seenKeys.seenFriendIds, friendIds),
     writeJsonArray(
-      SEEN_CARD_IDS_KEY,
+      seenKeys.seenCardIds,
       receivedCards.map((card) => card.id),
     ),
   ]);
@@ -381,12 +468,14 @@ export async function checkSocialNotifications() {
     getActiveFriendRepository(),
     getActivePromiseRepository(),
   ]);
+  const accountId = await getNotificationAccountId();
+  const seenKeys = getSocialNotificationStorageKeys(accountId);
   const [friendState, receivedCards, rawSeenRequestIds, rawSeenFriendIds, rawSeenCardIds] = await Promise.all([
     friendRepository.listFriendState(),
     promiseRepository.listReceivedCardAlerts(),
-    AsyncStorage.getItem(SEEN_FRIEND_REQUEST_IDS_KEY),
-    AsyncStorage.getItem(SEEN_FRIEND_IDS_KEY),
-    AsyncStorage.getItem(SEEN_CARD_IDS_KEY),
+    AsyncStorage.getItem(seenKeys.seenFriendRequestIds),
+    AsyncStorage.getItem(seenKeys.seenFriendIds),
+    AsyncStorage.getItem(seenKeys.seenCardIds),
   ]);
   const incomingRequestIds = friendState.requests
     .filter((request) => request.direction === 'INCOMING')
@@ -395,10 +484,10 @@ export async function checkSocialNotifications() {
 
   if (rawSeenRequestIds === null || rawSeenFriendIds === null || rawSeenCardIds === null) {
     await Promise.all([
-      writeJsonArray(SEEN_FRIEND_REQUEST_IDS_KEY, incomingRequestIds),
-      writeJsonArray(SEEN_FRIEND_IDS_KEY, friendIds),
+      writeJsonArray(seenKeys.seenFriendRequestIds, incomingRequestIds),
+      writeJsonArray(seenKeys.seenFriendIds, friendIds),
       writeJsonArray(
-        SEEN_CARD_IDS_KEY,
+        seenKeys.seenCardIds,
         receivedCards.map((card) => card.id),
       ),
     ]);
@@ -420,12 +509,12 @@ export async function checkSocialNotifications() {
 
   await Promise.all([
     writeJsonArray(
-      SEEN_FRIEND_REQUEST_IDS_KEY,
+      seenKeys.seenFriendRequestIds,
       incomingRequestIds,
     ),
-    writeJsonArray(SEEN_FRIEND_IDS_KEY, friendIds),
+    writeJsonArray(seenKeys.seenFriendIds, friendIds),
     writeJsonArray(
-      SEEN_CARD_IDS_KEY,
+      seenKeys.seenCardIds,
       receivedCards.map((card) => card.id),
     ),
   ]);
@@ -437,7 +526,8 @@ async function scheduleAppointmentRemindersOnce(profile: HostProfile, scheduleIt
   }
 
   await configureAppNotifications();
-  const currentReminderIds = readJsonMap(await AsyncStorage.getItem(REMINDER_IDS_KEY));
+  const reminderIdsKey = await getCurrentNotificationStorageKey(REMINDER_IDS_PREFIX);
+  const currentReminderIds = readJsonMap(await AsyncStorage.getItem(reminderIdsKey));
   const reminderPlan = buildReminderSchedulePlan(profile.reminderLead, scheduleItems, currentReminderIds);
   const nextReminderIds: ReminderRecordMap = { ...reminderPlan.keptReminders };
 
@@ -466,7 +556,7 @@ async function scheduleAppointmentRemindersOnce(profile: HostProfile, scheduleIt
     };
   }
 
-  await AsyncStorage.setItem(REMINDER_IDS_KEY, JSON.stringify(nextReminderIds));
+  await AsyncStorage.setItem(reminderIdsKey, JSON.stringify(nextReminderIds));
   await pruneStaleAppointmentReminderNotifications(nextReminderIds);
 }
 

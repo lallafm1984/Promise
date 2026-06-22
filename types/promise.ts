@@ -108,6 +108,7 @@ export interface ConfirmCardInput {
 
 export interface RespondToReceivedCardInput {
   cardId: string;
+  respondentComment?: string;
   responses: Array<{
     candidateId: string;
     choice: ReceivedCardResponseChoice;

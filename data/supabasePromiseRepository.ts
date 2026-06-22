@@ -182,6 +182,7 @@ function cleanConfirmCardInput(input: ConfirmCardInput) {
 
 function cleanRespondToReceivedCardInput(input: RespondToReceivedCardInput): RespondToReceivedCardInput {
   const cardId = input.cardId.trim();
+  const respondentComment = input.respondentComment?.trim();
   const responses = input.responses
     .map((response) => ({ candidateId: response.candidateId.trim(), choice: response.choice }))
     .filter((response) => response.candidateId.length > 0);
@@ -190,7 +191,11 @@ function cleanRespondToReceivedCardInput(input: RespondToReceivedCardInput): Res
     throw new Error('응답할 시간을 선택해 주세요.');
   }
 
-  return { cardId, responses };
+  return {
+    cardId,
+    responses,
+    ...(respondentComment !== undefined ? { respondentComment } : {}),
+  };
 }
 
 function mapCard(
@@ -707,6 +712,28 @@ export const supabasePromiseRepository: PromiseRepository = {
       throw appointmentDeleteError;
     }
 
+    const { data: respondentIdData, error: respondentIdsError } = await client
+      .from('appointment_respondents')
+      .select('id')
+      .eq('card_id', cleanCardId);
+
+    if (respondentIdsError) {
+      throw respondentIdsError;
+    }
+
+    const respondentIds = ((respondentIdData ?? []) as AppointmentIdRow[]).map((respondent) => respondent.id);
+
+    if (respondentIds.length > 0) {
+      const { error: responseDeleteError } = await client
+        .from('appointment_candidate_responses')
+        .delete()
+        .in('respondent_id', respondentIds);
+
+      if (responseDeleteError) {
+        throw responseDeleteError;
+      }
+    }
+
     const { error: respondentDeleteError } = await client
       .from('appointment_respondents')
       .delete()
@@ -918,13 +945,15 @@ export const supabasePromiseRepository: PromiseRepository = {
     }
 
     let respondentId = (existingRespondent as { id: string } | null)?.id;
+    const respondentValues = {
+      display_name: profile.display_name,
+      ...(cleanInput.respondentComment !== undefined ? { comment: cleanInput.respondentComment } : {}),
+    };
 
     if (respondentId) {
       const { error: updateRespondentError } = await client
         .from('appointment_respondents')
-        .update({
-          display_name: profile.display_name,
-        })
+        .update(respondentValues)
         .eq('id', respondentId)
         .eq('profile_id', user.id);
 
@@ -938,6 +967,7 @@ export const supabasePromiseRepository: PromiseRepository = {
           card_id: cleanInput.cardId,
           profile_id: user.id,
           display_name: profile.display_name,
+          comment: cleanInput.respondentComment ?? '',
         })
         .select('id')
         .single();

@@ -10,6 +10,7 @@ import {
   enableAppNotifications,
   getAppNotificationPermissionStatus,
   getAppNotificationSettingsSnapshot,
+  installSocialNotificationRealtimeRefresh,
   installNotificationResponseHandler,
   isAppNotificationEnabled,
   scheduleAppointmentReminders,
@@ -54,6 +55,16 @@ export function useAppNotificationRuntime() {
     }
 
     void refreshEnabledNotifications();
+    let isSubscribed = true;
+    let removeRealtimeRefresh: (() => void) | null = null;
+    void installSocialNotificationRealtimeRefresh(refreshEnabledNotifications).then((remove) => {
+      if (!isSubscribed) {
+        remove();
+        return;
+      }
+
+      removeRealtimeRefresh = remove;
+    });
     const appStateSubscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void refreshEnabledNotifications();
@@ -67,6 +78,8 @@ export function useAppNotificationRuntime() {
     }, 60_000);
 
     return () => {
+      isSubscribed = false;
+      removeRealtimeRefresh?.();
       appStateSubscription.remove();
       authSubscription?.data.subscription.unsubscribe();
       clearInterval(intervalId);

@@ -4,19 +4,21 @@ import {
   BellRing,
   CheckCircle2,
   ChevronRight,
+  Copy,
   Database,
   Globe2,
   KeyRound,
   LogIn,
-  Link2,
   LogOut,
   PencilLine,
+  Share2,
   ShieldCheck,
   UserRound,
   X,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { Modal, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ActionButton, AppScreen, Card, SectionHeader } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
@@ -26,8 +28,13 @@ import { usePromiseData } from '@/hooks/usePromiseData';
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { getNotificationStatusCopy } from '@/lib/notificationStatus';
 import { resolveDisplayProfile } from '@/lib/profileDisplay';
+import {
+  buildProfileShareMessage,
+  getProfileHandleForClipboard,
+} from '@/lib/profileShare';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { getAuthRedirectUrl, signInWithSocialProvider, signOutFromSupabase } from '@/lib/supabaseAuth';
+import type { HostProfile } from '@/types/promise';
 
 type ProviderId = 'google' | 'kakao';
 
@@ -52,16 +59,16 @@ export default function ProfileScreen() {
   const { isAuthenticated, user } = useSupabaseAuth();
   const notificationSettings = useNotificationSettings();
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeTitle, setNoticeTitle] = useState('안내');
   const [profileDraftName, setProfileDraftName] = useState('');
-  const [profileDraftHandle, setProfileDraftHandle] = useState('');
   const [profileEditVisible, setProfileEditVisible] = useState(false);
+  const [profileShareVisible, setProfileShareVisible] = useState(false);
   const [profileEditError, setProfileEditError] = useState<string | null>(null);
   const [savedProfile, setSavedProfile] = useState(profile);
   const [isAuthWorking, setIsAuthWorking] = useState(false);
   const currentProfile = resolveDisplayProfile(profile, savedProfile);
   const displayName = currentProfile?.displayName ?? user?.email ?? '내 프로필';
   const handle = currentProfile?.handle ?? 'handle';
-  const profileUrl = currentProfile?.profileUrl ?? 'whenbollae.app/@handle';
   const avatarLabel = displayName.slice(0, 1);
   const notificationStatus = getNotificationStatusCopy({
     enabled: notificationSettings.enabled,
@@ -127,6 +134,50 @@ export default function ProfileScreen() {
     setNotice(sent ? '테스트 알림을 보냈어요.' : '테스트 알림을 보내지 못했어요. 알림 권한과 설정을 확인해 주세요.');
   }
 
+  async function handleShareProfile() {
+    if (!currentProfile) {
+      setNotice('친구 아이디를 공유하려면 먼저 로그인해 주세요.');
+      return;
+    }
+
+    try {
+      const result = await Share.share({
+        message: buildProfileShareMessage(currentProfile),
+      });
+
+      if (result.action !== Share.dismissedAction) {
+        setProfileShareVisible(false);
+        setNotice('친구 아이디를 공유했어요.');
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '친구 아이디를 공유하지 못했어요.');
+    }
+  }
+
+  async function handleCopyProfileHandle() {
+    if (!currentProfile) {
+      setNotice('친구 아이디를 복사하려면 먼저 로그인해 주세요.');
+      return;
+    }
+
+    try {
+      await Clipboard.setStringAsync(getProfileHandleForClipboard(currentProfile));
+      setProfileShareVisible(false);
+      setNotice('친구 아이디를 복사했어요.');
+    } catch {
+      setNotice('친구 아이디를 복사하지 못했어요.');
+    }
+  }
+
+  function openProfileShare() {
+    if (!currentProfile) {
+      setNotice('친구 아이디를 공유하려면 먼저 로그인해 주세요.');
+      return;
+    }
+
+    setProfileShareVisible(true);
+  }
+
   function openProfileEdit() {
     if (!isAuthenticated) {
       setNotice('프로필을 수정하려면 먼저 로그인해 주세요.');
@@ -134,7 +185,6 @@ export default function ProfileScreen() {
     }
 
     setProfileDraftName(displayName);
-    setProfileDraftHandle(handle);
     setProfileEditError(null);
     setProfileEditVisible(true);
   }
@@ -155,10 +205,10 @@ export default function ProfileScreen() {
     try {
       const updatedProfile = await updateAuthenticatedProfile({
         displayName: profileDraftName,
-        handle: profileDraftHandle,
       });
       setSavedProfile(mapProfileToHostProfile(updatedProfile));
       setProfileEditVisible(false);
+      setNoticeTitle('수정 완료');
       setNotice('프로필을 저장했어요.');
     } catch (error) {
       setProfileEditError(error instanceof Error ? error.message : '프로필을 저장하지 못했어요.');
@@ -224,8 +274,26 @@ export default function ProfileScreen() {
         <SectionHeader title="공개 프로필" action={`@${handle}`} />
         <Card style={styles.identityCard}>
           <ProfileLine icon={<UserRound size={18} color={palette.primaryDeep} />} label="이름" value={displayName} />
-          <ProfileLine icon={<AtSign size={18} color={palette.primaryDeep} />} label="아이디" value={`@${handle}`} />
-          <ProfileLine icon={<Link2 size={18} color={palette.primaryDeep} />} label="프로필 링크" value={profileUrl} />
+          <ProfileLine
+            action={
+              <Pressable
+                accessibilityLabel="친구 아이디 공유"
+                accessibilityRole="button"
+                disabled={!currentProfile}
+                hitSlop={8}
+                onPress={openProfileShare}
+                style={({ pressed }) => [
+                  styles.profileLineAction,
+                  !currentProfile && styles.disabledProfileLineAction,
+                  pressed && currentProfile && styles.pressed,
+                ]}>
+                <Share2 size={18} color={palette.primaryDeep} />
+              </Pressable>
+            }
+            icon={<AtSign size={18} color={palette.primaryDeep} />}
+            label="아이디"
+            value={`@${handle}`}
+          />
           <ActionButton
             label="프로필 수정"
             variant="secondary"
@@ -303,15 +371,27 @@ export default function ProfileScreen() {
       <ProfileEditModal
         displayName={profileDraftName}
         error={profileEditError}
-        handle={profileDraftHandle}
         isSaving={isAuthWorking}
         visible={profileEditVisible}
         onChangeDisplayName={setProfileDraftName}
-        onChangeHandle={setProfileDraftHandle}
         onClose={closeProfileEdit}
         onSave={() => void handleSaveProfile()}
       />
-      <NoticeModal message={notice} onClose={() => setNotice(null)} />
+      <ProfileShareModal
+        profile={currentProfile}
+        visible={profileShareVisible}
+        onClose={() => setProfileShareVisible(false)}
+        onCopyId={() => void handleCopyProfileHandle()}
+        onShare={() => void handleShareProfile()}
+      />
+      <NoticeModal
+        message={notice}
+        title={noticeTitle}
+        onClose={() => {
+          setNotice(null);
+          setNoticeTitle('안내');
+        }}
+      />
     </>
   );
 }
@@ -350,7 +430,7 @@ function ProviderButton({ disabled, provider, onPress }: { disabled?: boolean; p
   );
 }
 
-function ProfileLine({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+function ProfileLine({ action, icon, label, value }: { action?: ReactNode; icon: ReactNode; label: string; value: string }) {
   return (
     <View style={styles.profileLine}>
       <View style={styles.profileLineIcon}>{icon}</View>
@@ -360,6 +440,7 @@ function ProfileLine({ icon, label, value }: { icon: ReactNode; label: string; v
           {value}
         </Text>
       </View>
+      {action}
     </View>
   );
 }
@@ -402,21 +483,17 @@ function SettingRow({
 function ProfileEditModal({
   displayName,
   error,
-  handle,
   isSaving,
   visible,
   onChangeDisplayName,
-  onChangeHandle,
   onClose,
   onSave,
 }: {
   displayName: string;
   error: string | null;
-  handle: string;
   isSaving: boolean;
   visible: boolean;
   onChangeDisplayName: (value: string) => void;
-  onChangeHandle: (value: string) => void;
   onClose: () => void;
   onSave: () => void;
 }) {
@@ -454,23 +531,6 @@ function ProfileEditModal({
                   value={displayName}
                 />
               </View>
-              <View style={styles.inputShell}>
-                <Text style={styles.inputLabel}>아이디</Text>
-                <View style={styles.handleInputRow}>
-                  <Text style={styles.handlePrefix}>@</Text>
-                  <TextInput
-                    accessibilityLabel="프로필 아이디"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    maxLength={30}
-                    onChangeText={onChangeHandle}
-                    placeholder="handle"
-                    placeholderTextColor={palette.inkSoft}
-                    style={[styles.textInput, styles.handleInput]}
-                    value={handle}
-                  />
-                </View>
-              </View>
             </View>
 
             {error ? <Text style={styles.modalError}>{error}</Text> : null}
@@ -486,7 +546,79 @@ function ProfileEditModal({
   );
 }
 
-function NoticeModal({ message, onClose }: { message: string | null; onClose: () => void }) {
+function ProfileShareModal({
+  profile,
+  visible,
+  onClose,
+  onCopyId,
+  onShare,
+}: {
+  profile: HostProfile | null;
+  visible: boolean;
+  onClose: () => void;
+  onCopyId: () => void;
+  onShare: () => void;
+}) {
+  const handleLabel = profile ? getProfileHandleForClipboard(profile) : '@handle';
+
+  return (
+    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.cardKicker}>친구 공유</Text>
+                <Text style={styles.modalTitle}>아이디 공유</Text>
+              </View>
+              <Pressable
+                accessibilityLabel="아이디 공유 닫기"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
+            </View>
+
+            <View style={styles.shareIdPreview}>
+              <View style={styles.shareIdIcon}>
+                <AtSign size={18} color={palette.primaryDeep} />
+              </View>
+              <View style={styles.shareIdCopy}>
+                <Text style={styles.profileLineLabel}>친구 아이디</Text>
+                <Text style={styles.shareIdValue} numberOfLines={1}>
+                  {handleLabel}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <ActionButton
+                label="카톡 공유"
+                variant="kakao"
+                icon={<Share2 size={17} color={palette.onLight} />}
+                disabled={!profile}
+                fullWidth
+                onPress={onShare}
+              />
+              <ActionButton
+                label="아이디 복사"
+                variant="secondary"
+                icon={<Copy size={17} color={palette.primaryDeep} />}
+                disabled={!profile}
+                fullWidth
+                onPress={onCopyId}
+              />
+            </View>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function NoticeModal({ message, title, onClose }: { message: string | null; title: string; onClose: () => void }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={message !== null}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
@@ -494,8 +626,8 @@ function NoticeModal({ message, onClose }: { message: string | null; onClose: ()
           <View style={styles.modalPanel}>
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.cardKicker}>로그인 준비</Text>
-                <Text style={styles.modalTitle}>연결 설정이 필요해요</Text>
+                <Text style={styles.cardKicker}>안내</Text>
+                <Text style={styles.modalTitle}>{title}</Text>
               </View>
               <Pressable
                 accessibilityLabel="안내 닫기"
@@ -724,6 +856,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 34,
   },
+  profileLineAction: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  disabledProfileLineAction: {
+    opacity: 0.5,
+  },
   profileLineCopy: {
     flex: 1,
     gap: 3,
@@ -937,6 +1082,39 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 20,
   },
+  shareIdPreview: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 64,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  shareIdIcon: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  shareIdCopy: {
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  shareIdValue: {
+    color: palette.ink,
+    fontSize: 18,
+    fontWeight: '900',
+    lineHeight: 24,
+  },
   inputStack: {
     gap: spacing.sm,
   },
@@ -960,19 +1138,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     minHeight: 34,
     padding: 0,
-  },
-  handleInputRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 2,
-  },
-  handlePrefix: {
-    color: palette.primaryDeep,
-    fontSize: 16,
-    fontWeight: '900',
-  },
-  handleInput: {
-    flex: 1,
   },
   modalActions: {
     flexDirection: 'row',

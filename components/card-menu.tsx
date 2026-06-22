@@ -10,6 +10,8 @@ import {
   formatDraftDateTimeLabel,
   formatDraftTimeInputValue,
   canDeleteManagedCard,
+  canHideReceivedManagedCard,
+  canHideManagedPastCard,
   getManagedCardInboxTab,
   getManagedCardResponseStatItems,
   getManagedCardRowMetaLabel,
@@ -19,6 +21,7 @@ import {
   getManagedCardTimeLabel,
   getModeLabel,
   getParticipantChoiceForSelectedSlot,
+  getReceivedCardResponseBadges,
   getResponseChoiceLabel,
   mergeDraftDatePart,
   mergeDraftDateTime,
@@ -26,6 +29,7 @@ import {
   type ManagedCardActionKind,
   type ManagedCardCurrentProfile,
   type ManagedCardInboxTab,
+  shouldShowManagedCardRowMeta,
 } from '@/lib/cardMenu';
 import type { AppointmentMode, PromiseCard, ResponseChoice } from '@/types/promise';
 
@@ -386,12 +390,18 @@ function ManagedCardRow({
   onAction: ManagedCardsSectionProps['onAction'];
   onDelete?: ManagedCardsSectionProps['onDelete'];
 }) {
-  const action = getManagedCardAction(card, now);
+  const action = getManagedCardAction(card, now, currentProfile);
   const statusTitle = getManagedCardTabLabel(getManagedCardInboxTab(card, now, currentProfile));
   const rowMetaLabel = getManagedCardRowMetaLabel(card, currentProfile);
+  const responseBadges = getReceivedCardResponseBadges(card, currentProfile);
   const responseStatItems = getManagedCardResponseStatItems(card);
   const shouldShowResponseStats = getManagedCardScope(card) === 'SENT' && responseStatItems.length > 0;
+  const shouldShowRowMeta = shouldShowManagedCardRowMeta(card);
   const shouldShowParticipantResponses = card.status === 'CONFIRMED' && card.participants.length > 0;
+  const canShowDeleteButton =
+    canDeleteManagedCard(card, now) ||
+    canHideReceivedManagedCard(card) ||
+    canHideManagedPastCard(card, now);
   const timeLabel = getManagedCardTimeLabel(card) || UNKNOWN_TIME_LABEL;
 
   return (
@@ -402,7 +412,7 @@ function ManagedCardRow({
           <Text style={styles.managedStatus} numberOfLines={1}>
             {statusTitle}
           </Text>
-          {onDelete && canDeleteManagedCard(card, now) ? (
+          {onDelete && canShowDeleteButton ? (
             <Pressable
               accessibilityLabel={`${card.title} ${DELETE_LABEL}`}
               accessibilityRole="button"
@@ -419,11 +429,11 @@ function ManagedCardRow({
       </Text>
       {shouldShowResponseStats ? (
         <ManagedResponseStats items={responseStatItems} />
-      ) : (
+      ) : shouldShowRowMeta ? (
         <Text style={styles.managedMeta} numberOfLines={1}>
           {rowMetaLabel}
         </Text>
-      )}
+      ) : null}
       <View style={styles.previewInfoList}>
         <InfoPill
           icon={<Clock3 size={15} color={palette.primaryDeep} />}
@@ -432,8 +442,13 @@ function ManagedCardRow({
         />
         <InfoPill icon={<MapPin size={15} color={palette.primaryDeep} />} text={card.location} />
       </View>
+      {responseBadges.length > 0 ? (
+        <ManagedReceivedResponseBadges badges={responseBadges} />
+      ) : null}
       {shouldShowParticipantResponses ? <ManagedParticipantSummary card={card} /> : null}
-      <ActionButton label={action.label} variant="secondary" fullWidth onPress={() => onAction(card, action.kind)} />
+      {action ? (
+        <ActionButton label={action.label} variant="secondary" fullWidth onPress={() => onAction(card, action.kind)} />
+      ) : null}
     </Card>
   );
 }
@@ -447,6 +462,24 @@ function ManagedResponseStats({ items }: { items: ReturnType<typeof getManagedCa
           <Text style={styles.managedResponseStatValue}>{item.value}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+function ManagedReceivedResponseBadges({ badges }: { badges: ReturnType<typeof getReceivedCardResponseBadges> }) {
+  return (
+    <View style={styles.receivedResponseSummary}>
+      <MessageCircle size={14} color={palette.primaryDeep} />
+      <Text style={styles.receivedResponseLabel}>내 답장</Text>
+      <View style={styles.receivedResponseBadgeList}>
+        {badges.map((badge) => (
+          <View key={badge.key} style={[styles.managedParticipantChoiceBadge, getManagedParticipantChoiceBadgeStyle(badge.choice)]}>
+            <Text style={styles.managedParticipantChoiceText} numberOfLines={1}>
+              {badge.label}
+            </Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -871,6 +904,32 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '900',
     lineHeight: 21,
+  },
+  receivedResponseSummary: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    minHeight: 42,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  receivedResponseLabel: {
+    color: palette.primaryDeep,
+    flexShrink: 0,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  receivedResponseBadgeList: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    minWidth: 0,
   },
   managedParticipantPanel: {
     backgroundColor: palette.paper,

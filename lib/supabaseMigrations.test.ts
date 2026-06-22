@@ -59,6 +59,42 @@ const expiredAppointmentCardCleanupMigrationPath = join(
   'migrations',
   '20260620094500_cleanup_all_expired_appointment_cards.sql',
 );
+const shortProfileHandlesMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260622123000_short_profile_handles.sql',
+);
+const friendPushCopyMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260622133500_friend_push_notification_copy.sql',
+);
+const cardReceivedPushCopyMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260622141000_card_received_push_notification_copy.sql',
+);
+const ownerResetCardResponsesMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260622142000_allow_owner_reset_card_candidate_responses.sql',
+);
+const notificationTokenClaimMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260622150000_claim_notification_tokens_and_card_recipient_realtime.sql',
+);
+const friendRequestRealtimeMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260622153000_friend_request_realtime_notifications.sql',
+);
 
 describe('Supabase notification migrations', () => {
   it('revokes direct client execution from notification trigger functions', () => {
@@ -84,6 +120,68 @@ describe('Supabase notification migrations', () => {
 
     expect(sql).toContain(`'channelId', 'whenbollae-default'`);
     expect(sql).toContain(`'priority', 'high'`);
+  });
+
+  it('lets the current account claim its device push token and publishes card recipients for realtime refresh', () => {
+    expect(existsSync(notificationTokenClaimMigrationPath)).toBe(true);
+
+    const sql = readFileSync(notificationTokenClaimMigrationPath, 'utf8');
+
+    expect(sql).toContain('create or replace function public.register_notification_token');
+    expect(sql).toContain('delete from public.notification_tokens');
+    expect(sql).toContain('where provider = notification_provider');
+    expect(sql).toContain('and token = notification_token');
+    expect(sql).toContain('insert into public.notification_tokens');
+    expect(sql).toContain('grant execute on function public.register_notification_token(text, text, text) to authenticated;');
+    expect(sql).toContain('alter publication supabase_realtime add table public.card_recipients;');
+  });
+
+  it('publishes friend requests for realtime social notification refresh', () => {
+    expect(existsSync(friendRequestRealtimeMigrationPath)).toBe(true);
+
+    const sql = readFileSync(friendRequestRealtimeMigrationPath, 'utf8');
+
+    expect(sql).toContain('alter publication supabase_realtime add table public.friend_requests;');
+    expect(sql).toContain('when duplicate_object then null;');
+  });
+
+  it('uses request-arrived and friendship-complete copy for friend push notifications', () => {
+    expect(existsSync(friendPushCopyMigrationPath)).toBe(true);
+
+    const sql = readFileSync(friendPushCopyMigrationPath, 'utf8');
+
+    expect(sql).toContain('create or replace function public.notify_friend_request_created()');
+    expect(sql).toContain("'친구 요청이 왔어요'");
+    expect(sql).toContain("|| '님에게서 친구 요청이 왔어요.'");
+    expect(sql).toContain('create or replace function public.notify_friend_request_accepted()');
+    expect(sql).toContain("'친구가 되었어요'");
+    expect(sql).toContain("|| '와 친구가 되었어요.'");
+    expect(sql).toContain('revoke all on function public.notify_friend_request_created() from authenticated;');
+    expect(sql).toContain('revoke all on function public.notify_friend_request_accepted() from authenticated;');
+  });
+
+  it('uses friend-sent-card copy for received card push notifications', () => {
+    expect(existsSync(cardReceivedPushCopyMigrationPath)).toBe(true);
+
+    const sql = readFileSync(cardReceivedPushCopyMigrationPath, 'utf8');
+
+    expect(sql).toContain('create or replace function public.notify_card_recipient_created()');
+    expect(sql).toContain("'친구가 카드를 보냈어요'");
+    expect(sql).toContain("|| '님이 ' || coalesce(card_location, '약속') || ' 약속 카드를 보냈어요.'");
+    expect(sql).toContain(`'type', 'card_received'`);
+    expect(sql).toContain('revoke all on function public.notify_card_recipient_created() from authenticated;');
+  });
+
+  it('allows card owners to delete stale candidate responses when editing a card schedule', () => {
+    expect(existsSync(ownerResetCardResponsesMigrationPath)).toBe(true);
+
+    const sql = readFileSync(ownerResetCardResponsesMigrationPath, 'utf8');
+
+    expect(sql).toContain('create policy "Card owners can delete candidate responses on own cards"');
+    expect(sql).toContain('on public.appointment_candidate_responses for delete');
+    expect(sql).toContain('public.is_appointment_card_owner(r.card_id)');
+    expect(sql).toContain('create policy "Card owners can delete respondents on own cards"');
+    expect(sql).toContain('on public.appointment_respondents for delete');
   });
 
   it('allows authenticated users to create their own cards and candidates', () => {
@@ -188,5 +286,17 @@ describe('Supabase notification migrations', () => {
     expect(sql).not.toContain('status in (');
     expect(sql).toContain('revoke all on function public.cleanup_expired_appointment_cards() from anon;');
     expect(sql).toContain('grant execute on function public.cleanup_expired_appointment_cards() to service_role;');
+  });
+
+  it('generates short public profile handles for friend sharing', () => {
+    expect(existsSync(shortProfileHandlesMigrationPath)).toBe(true);
+
+    const sql = readFileSync(shortProfileHandlesMigrationPath, 'utf8');
+
+    expect(sql).toContain('create or replace function public.generate_short_profile_handle()');
+    expect(sql).toContain("substr(encode(extensions.gen_random_bytes(4), 'hex'), 1, 6)");
+    expect(sql).toContain('public.generate_short_profile_handle()');
+    expect(sql).toContain("|| '_' || substr(u.id::text, 1, 8)");
+    expect(sql).toContain('revoke all on function public.generate_short_profile_handle() from authenticated;');
   });
 });

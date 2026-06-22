@@ -1,8 +1,11 @@
 import type { PromiseCard } from '@/types/promise';
+import { getPreferredManagedCardSnapshot } from '@/lib/managedCards';
 
 export interface ManagedCardArchiveState {
   localCards: PromiseCard[];
   removedCardIds: string[];
+  hiddenPastCardIds: string[];
+  hiddenReceivedReplyCardIds: string[];
   updatedAt: string | null;
 }
 
@@ -36,6 +39,8 @@ export function buildManagedCardArchiveCache(state: ManagedCardArchiveState): st
     version: 1,
     localCards: state.localCards,
     removedCardIds: Array.from(new Set(state.removedCardIds)),
+    hiddenPastCardIds: Array.from(new Set(state.hiddenPastCardIds)),
+    hiddenReceivedReplyCardIds: Array.from(new Set(state.hiddenReceivedReplyCardIds)),
     updatedAt: state.updatedAt,
   } satisfies ManagedCardArchivePayload);
 }
@@ -56,6 +61,12 @@ export function parseManagedCardArchiveCache(raw: string | null): ManagedCardArc
     const removedCardIds = Array.isArray(parsed.removedCardIds)
       ? parsed.removedCardIds.filter((cardId): cardId is string => typeof cardId === 'string')
       : null;
+    const hiddenPastCardIds = Array.isArray(parsed.hiddenPastCardIds)
+      ? parsed.hiddenPastCardIds.filter((cardId): cardId is string => typeof cardId === 'string')
+      : [];
+    const hiddenReceivedReplyCardIds = Array.isArray(parsed.hiddenReceivedReplyCardIds)
+      ? parsed.hiddenReceivedReplyCardIds.filter((cardId): cardId is string => typeof cardId === 'string')
+      : [];
 
     if (!localCards || !removedCardIds) {
       return null;
@@ -64,6 +75,8 @@ export function parseManagedCardArchiveCache(raw: string | null): ManagedCardArc
     return {
       localCards,
       removedCardIds: Array.from(new Set(removedCardIds)),
+      hiddenPastCardIds: Array.from(new Set(hiddenPastCardIds)),
+      hiddenReceivedReplyCardIds: Array.from(new Set(hiddenReceivedReplyCardIds)),
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null,
     };
   } catch {
@@ -83,7 +96,10 @@ export function mergeRemoteManagedCardsIntoArchive(
   return [
     ...localCards
       .filter((card) => !removedCardIdSet.has(card.id))
-      .map((card) => remoteCardsById.get(card.id) ?? card),
+      .map((card) => {
+        const remoteCard = remoteCardsById.get(card.id);
+        return remoteCard ? getPreferredManagedCardSnapshot(card, remoteCard) : card;
+      }),
     ...remoteCards.filter((card) => !removedCardIdSet.has(card.id) && !localCardIds.has(card.id)),
   ];
 }

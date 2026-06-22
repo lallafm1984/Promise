@@ -219,6 +219,7 @@ function applyReceivedResponse(card: PromiseCard, input: RespondToReceivedCardIn
   const respondedCard = applyReceivedCardResponse(card, {
     respondentId: profile.id,
     respondentName: profile.displayName,
+    respondentComment: input.respondentComment,
     responses: input.responses,
   });
 

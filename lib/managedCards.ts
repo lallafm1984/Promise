@@ -1,4 +1,10 @@
-import { getManagedStatusGroup, getPrimarySlot, type ManagedStatusGroup } from './cardMenu';
+import {
+  getManagedCardScope,
+  getManagedStatusGroup,
+  getPrimarySlot,
+  type ManagedCardCurrentProfile,
+  type ManagedStatusGroup,
+} from './cardMenu';
 import { toDateKey } from './scheduleCalendar';
 import type { AppointmentStatus, PromiseCard, ScheduleItem } from '@/types/promise';
 
@@ -6,6 +12,16 @@ export interface ManagedCardDeleteConfirmation {
   title: string;
   body: string;
   confirmLabel: string;
+  directDeleteLabel?: string;
+  shareDeleteLabel?: string;
+}
+
+export interface CardScheduleDeleteConfirmation {
+  title: string;
+  body: string;
+  confirmLabel?: string;
+  directDeleteLabel?: string;
+  shareDeleteLabel?: string;
 }
 
 export const CARD_CORE_CHANGE_POLICY = {
@@ -34,6 +50,49 @@ export function mergeManagedCardIntoLocalCards(
   ];
 }
 
+function getAnsweredResponseCount(card: PromiseCard): number {
+  return card.participants.reduce((total, participant) => {
+    const representativeCount = participant.choice && participant.choice !== 'UNANSWERED' ? 1 : 0;
+    const candidateResponseCount =
+      participant.responses?.filter((response) => response.choice !== 'UNANSWERED').length ?? 0;
+
+    return total + Math.max(representativeCount, candidateResponseCount);
+  }, 0);
+}
+
+function hasSameCandidateResponseTargets(localCard: PromiseCard, remoteCard: PromiseCard): boolean {
+  if (localCard.candidates.length !== remoteCard.candidates.length) {
+    return false;
+  }
+
+  const remoteCandidatesById = new Map(remoteCard.candidates.map((candidate) => [candidate.id, candidate]));
+  return localCard.candidates.every((candidate) => {
+    const remoteCandidate = remoteCandidatesById.get(candidate.id);
+
+    return (
+      remoteCandidate?.startsAt === candidate.startsAt &&
+      remoteCandidate.endsAt === candidate.endsAt &&
+      remoteCandidate.label === candidate.label
+    );
+  });
+}
+
+export function getPreferredManagedCardSnapshot(localCard: PromiseCard, remoteCard: PromiseCard): PromiseCard {
+  if (
+    localCard.requesterName &&
+    hasSameCandidateResponseTargets(localCard, remoteCard) &&
+    getAnsweredResponseCount(localCard) > getAnsweredResponseCount(remoteCard)
+  ) {
+    return {
+      ...remoteCard,
+      candidates: localCard.candidates,
+      participants: localCard.participants,
+    };
+  }
+
+  return remoteCard;
+}
+
 export function mergeManagedCardsView(
   createdCards: PromiseCard[],
   recentCards: PromiseCard[],
@@ -45,7 +104,10 @@ export function mergeManagedCardsView(
   return [
     ...createdCards
       .filter((card) => !removedCardIds.includes(card.id))
-      .map((card) => recentCardsById.get(card.id) ?? card),
+      .map((card) => {
+        const remoteCard = recentCardsById.get(card.id);
+        return remoteCard ? getPreferredManagedCardSnapshot(card, remoteCard) : card;
+      }),
     ...recentCards.filter(
       (card) => !removedCardIds.includes(card.id) && !createdCardIds.has(card.id),
     ),
@@ -68,6 +130,81 @@ export function removeManagedCardFromLocalState(
     localCards: localCards.filter((currentCard) => currentCard.id !== cardId),
     removedCardIds: removedCardIds.includes(cardId) ? removedCardIds : [...removedCardIds, cardId],
   };
+}
+
+export function hideManagedPastCardFromLocalState(
+  hiddenPastCardIds: string[],
+  card: PromiseCard,
+  now = new Date(),
+): { hiddenPastCardIds: string[]; removedCardIds: string[] } {
+  const statusGroup = getManagedStatusGroup(card, now);
+
+  if (statusGroup !== 'PAST' && statusGroup !== 'CONFIRMED') {
+    return {
+      hiddenPastCardIds,
+      removedCardIds: [],
+    };
+  }
+
+  return {
+    hiddenPastCardIds: hiddenPastCardIds.includes(card.id) ? hiddenPastCardIds : [...hiddenPastCardIds, card.id],
+    removedCardIds: [],
+  };
+}
+
+export function hideReceivedRepliedCardFromLocalState(
+  hiddenReceivedReplyCardIds: string[],
+  card: PromiseCard,
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): { hiddenReceivedReplyCardIds: string[]; removedCardIds: string[] } {
+  if (getManagedCardScope(card) !== 'RECEIVED') {
+    return {
+      hiddenReceivedReplyCardIds,
+      removedCardIds: [],
+    };
+  }
+
+  return {
+    hiddenReceivedReplyCardIds: hiddenReceivedReplyCardIds.includes(card.id)
+      ? hiddenReceivedReplyCardIds
+      : [...hiddenReceivedReplyCardIds, card.id],
+    removedCardIds: [],
+  };
+}
+
+export function filterManagedCardsByHiddenPastIds(
+  cards: PromiseCard[],
+  hiddenPastCardIds: string[],
+  now = new Date(),
+): PromiseCard[] {
+  if (hiddenPastCardIds.length === 0) {
+    return cards;
+  }
+
+  const hiddenPastCardIdSet = new Set(hiddenPastCardIds);
+  return cards.filter((card) => {
+    if (!hiddenPastCardIdSet.has(card.id)) {
+      return true;
+    }
+
+    const statusGroup = getManagedStatusGroup(card, now);
+    return statusGroup !== 'PAST' && statusGroup !== 'CONFIRMED';
+  });
+}
+
+export function filterManagedCardsByHiddenReceivedReplyIds(
+  cards: PromiseCard[],
+  hiddenReceivedReplyCardIds: string[],
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): PromiseCard[] {
+  if (hiddenReceivedReplyCardIds.length === 0) {
+    return cards;
+  }
+
+  const hiddenReceivedReplyCardIdSet = new Set(hiddenReceivedReplyCardIds);
+  return cards.filter((card) => !hiddenReceivedReplyCardIdSet.has(card.id) || getManagedCardScope(card) !== 'RECEIVED');
 }
 
 export function filterScheduleItemsByRemovedCardIds<T extends Pick<ScheduleItem, 'cardId'>>(
@@ -132,10 +269,49 @@ export function getConfirmedCardSchedulePath(card: PromiseCard): ConfirmedCardSc
 }
 
 export function getManagedCardDeleteConfirmation(card: PromiseCard): ManagedCardDeleteConfirmation {
+  if (card.status === 'CONFIRMED') {
+    return getManagedCardOnlyDeleteConfirmation();
+  }
+
   return {
     title: '카드 취소',
     body: `${card.title} 카드를 취소하고 관리함에서 제거할까요?`,
     confirmLabel: '취소하기',
+  };
+}
+
+export function getManagedCardOnlyDeleteConfirmation(): ManagedCardDeleteConfirmation {
+  return {
+    title: '카드 삭제',
+    body: '관리함에서 카드만 삭제할까요? 일정에는 영향을 주지 않아요.',
+    confirmLabel: '삭제',
+  };
+}
+
+export function getManagedPastCardHideConfirmation(card: PromiseCard): ManagedCardDeleteConfirmation {
+  return getManagedCardOnlyDeleteConfirmation();
+}
+
+export function getReceivedReplyCardHideConfirmation(): ManagedCardDeleteConfirmation {
+  return getManagedCardOnlyDeleteConfirmation();
+}
+
+export function getCardScheduleDeleteConfirmation(
+  item: Pick<ScheduleItem, 'title' | 'startsAt'>,
+  now = new Date(),
+): CardScheduleDeleteConfirmation {
+  if (getScheduleCardManageGroup(item, now) === 'PAST') {
+    return {
+      title: '일정 삭제',
+      body: '지난 약속을 삭제할까요?',
+      confirmLabel: '삭제',
+    };
+  }
+
+  return {
+    title: '일정 삭제',
+    body: `"${item.title}" 약속카드를 삭제할까요?`,
+    confirmLabel: '삭제',
   };
 }
 

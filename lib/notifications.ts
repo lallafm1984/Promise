@@ -80,23 +80,23 @@ export function getReminderFireDate(startsAt: string, reminderLead: ReminderLead
 
 export function buildFriendRequestNotification(request: FriendRequest): NotificationContent {
   return {
-    title: '새 친구 요청',
-    body: `${request.displayName}님이 친구를 요청했어요.`,
+    title: '친구 요청이 왔어요',
+    body: `${request.displayName}님에게서 친구 요청이 왔어요.`,
     data: { url: '/friends', type: 'friend_request', id: request.id },
   };
 }
 
 export function buildFriendAcceptedNotification(friend: AppFriend): NotificationContent {
   return {
-    title: '친구 추가 완료',
-    body: `${friend.displayName}님과 친구가 되었어요.`,
+    title: '친구가 되었어요',
+    body: `${friend.displayName}와 친구가 되었어요.`,
     data: { url: '/friends', type: 'friend_accepted', id: friend.id },
   };
 }
 
 export function buildCardReceivedNotification(alert: ReceivedCardAlert): NotificationContent {
   return {
-    title: '새 약속 카드',
+    title: '친구가 카드를 보냈어요',
     body: `${alert.requesterName}님이 ${alert.location} 약속 카드를 보냈어요.`,
     data: { url: '/manage', type: 'card_received', id: alert.id },
   };

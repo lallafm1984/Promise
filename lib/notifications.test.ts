@@ -83,17 +83,17 @@ describe('notification helpers', () => {
 
   it('builds user-facing notification copy', () => {
     expect(buildFriendRequestNotification(incomingRequest)).toEqual({
-      title: '새 친구 요청',
-      body: '하린님이 친구를 요청했어요.',
+      title: '친구 요청이 왔어요',
+      body: '하린님에게서 친구 요청이 왔어요.',
       data: { url: '/friends', type: 'friend_request', id: 'request-harin' },
     });
     expect(buildFriendAcceptedNotification(acceptedFriend)).toEqual({
-      title: '친구 추가 완료',
-      body: '유나님과 친구가 되었어요.',
+      title: '친구가 되었어요',
+      body: '유나와 친구가 되었어요.',
       data: { url: '/friends', type: 'friend_accepted', id: 'friend-yuna' },
     });
     expect(buildCardReceivedNotification(cardAlert)).toEqual({
-      title: '새 약속 카드',
+      title: '친구가 카드를 보냈어요',
       body: '민서님이 성수 카페 약속 카드를 보냈어요.',
       data: { url: '/manage', type: 'card_received', id: 'card-seongsu' },
     });

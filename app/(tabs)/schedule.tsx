@@ -47,7 +47,7 @@ import {
   getParticipantChoiceForSelectedSlot,
   getResponseChoiceLabel,
 } from '@/lib/cardMenu';
-import { buildCardCancellationMessage, filterScheduleItemsByRemovedCardIds } from '@/lib/managedCards';
+import { filterScheduleItemsByRemovedCardIds, getCardScheduleDeleteConfirmation } from '@/lib/managedCards';
 import {
   compareScheduleItems,
   formatMonthTitle,
@@ -79,21 +79,36 @@ interface ScheduleDialogState {
   actions: ScheduleDialogAction[];
 }
 
-const colorOptions: Array<{
+type ScheduleColorOption = {
   key: ScheduleColorKey;
   label: string;
   soft: string;
   accent: string;
-}> = [
+};
+
+const colorOptions: ScheduleColorOption[] = [
   { key: 'coral', label: '코랄', soft: palette.coralSoft, accent: palette.coral },
   { key: 'mint', label: '민트', soft: palette.mintSoft, accent: palette.mint },
   { key: 'lime', label: '라임', soft: palette.limeSoft, accent: palette.lime },
   { key: 'sky', label: '스카이', soft: palette.skySoft, accent: palette.sky },
   { key: 'amber', label: '앰버', soft: palette.amberSoft, accent: palette.amber },
 ];
+const scheduleColorOptions = colorOptions.filter((option) => option.key !== 'coral');
+
+function getColorOption(options: ScheduleColorOption[], key: ScheduleColorKey = 'sky') {
+  return options.find((option) => option.key === key) ?? options.find((option) => option.key === 'sky') ?? colorOptions[0];
+}
 
 function getScheduleColor(key: ScheduleColorKey = 'sky') {
-  return colorOptions.find((option) => option.key === key) ?? colorOptions[3];
+  return getColorOption(colorOptions, key);
+}
+
+function getManualScheduleColor(key: ScheduleColorKey = 'sky') {
+  return getColorOption(scheduleColorOptions, key);
+}
+
+function normalizeManualScheduleColorKey(key: ScheduleColorKey = 'sky') {
+  return getManualScheduleColor(key).key;
 }
 
 function getScheduleParticipantDisplayName(participant: ScheduleParticipant) {
@@ -149,7 +164,7 @@ if (Platform.OS === 'android') {
 
 export default function ScheduleScreen() {
   const { date } = useLocalSearchParams<{ date?: string | string[] }>();
-  const { scheduleItems } = usePromiseData();
+  const { scheduleItems, reload: reloadPromiseData } = usePromiseData();
   const { managedCards, removedCardIds, requestManagedCardChange, removeManagedCard } = useManagedCards();
   const {
     manualScheduleItems,
@@ -289,6 +304,11 @@ export default function ScheduleScreen() {
   }, [routeDateKey]);
 
   useFocusEffect(applyRouteDateSelection);
+  useFocusEffect(
+    useCallback(() => {
+      void reloadPromiseData({ force: true });
+    }, [reloadPromiseData]),
+  );
 
   function runLayoutTransition() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -400,7 +420,7 @@ export default function ScheduleScreen() {
     setScheduleTitle(item.title);
     setScheduleTime(item.startsAt || createScheduleTimeForDate(selectedDate));
     setScheduleLocation(item.location);
-    setScheduleColor(item.colorKey ?? 'sky');
+    setScheduleColor(normalizeManualScheduleColorKey(item.colorKey));
     setComposerMode('SCHEDULE');
   }
 
@@ -530,7 +550,7 @@ export default function ScheduleScreen() {
         location: scheduleLocation.trim() || '장소 미정',
         startsAt,
         endsAt: getCandidateEndsAt(startsAt),
-        colorKey: scheduleColor,
+        colorKey: normalizeManualScheduleColorKey(scheduleColor),
       };
 
       if (editingCardScheduleItem) {
@@ -573,18 +593,10 @@ export default function ScheduleScreen() {
     }
   }
 
-  async function shareAndDeleteCardSchedule(item: DisplayScheduleItem) {
+  async function deleteCardScheduleWithoutShare(item: DisplayScheduleItem) {
     setIsCardActionPending(true);
 
     try {
-      const shareResult = await Share.share({
-        message: buildCardCancellationMessage(item),
-      });
-
-      if (shareResult.action === Share.dismissedAction) {
-        return;
-      }
-
       const result = await removeManagedCard(item.cardId);
 
       if (result.deleteFailed) {
@@ -603,12 +615,15 @@ export default function ScheduleScreen() {
   }
 
   function requestDeleteCardSchedule(item: DisplayScheduleItem) {
+    const confirmation = getCardScheduleDeleteConfirmation(item);
+    setCardActionItem(null);
+
     showScheduleConfirm({
-      title: '일정 삭제하기',
-      body: `"${item.title}" 일정을 취소하고 상대방에게 공유할까요?`,
-      confirmLabel: '공유하고 삭제',
+      title: confirmation.title,
+      body: confirmation.body,
+      confirmLabel: confirmation.confirmLabel ?? '삭제',
       onConfirm: () => {
-        void shareAndDeleteCardSchedule(item);
+        void deleteCardScheduleWithoutShare(item);
       },
     });
   }
@@ -833,13 +848,13 @@ export default function ScheduleScreen() {
         {plannerLoading ? <Text style={styles.syncText}>일정 동기화 중...</Text> : null}
         {plannerError ? <Text style={styles.errorText}>{plannerError}</Text> : null}
         {activeMode === 'SCHEDULE' ? (
-          <SchedulePanel
-            selectedDate={selectedDate}
-            selectedItems={selectedItems}
-            onAdd={openScheduleComposer}
-            onEdit={openScheduleEditor}
-            onManageCard={openCardActions}
-          />
+        <SchedulePanel
+          selectedDate={selectedDate}
+          selectedItems={selectedItems}
+          onAdd={openScheduleComposer}
+          onEdit={openScheduleEditor}
+          onDeleteCardSchedule={requestDeleteCardSchedule}
+        />
         ) : (
           <TodoPanel
             openCount={openTodoCount}
@@ -1048,13 +1063,13 @@ function SchedulePanel({
   selectedItems,
   onAdd,
   onEdit,
-  onManageCard,
+  onDeleteCardSchedule,
 }: {
   selectedDate: Date;
   selectedItems: DisplayScheduleItem[];
   onAdd: () => void;
   onEdit: (item: DisplayScheduleItem) => void;
-  onManageCard: (item: DisplayScheduleItem) => void;
+  onDeleteCardSchedule: (item: DisplayScheduleItem) => void;
 }) {
   return (
     <>
@@ -1062,7 +1077,7 @@ function SchedulePanel({
       {selectedItems.length > 0 ? (
         <View style={styles.list}>
           {selectedItems.map((item) => (
-            <ScheduleItemCard key={item.id} item={item} onEdit={onEdit} onManageCard={onManageCard} />
+            <ScheduleItemCard key={item.id} item={item} onEdit={onEdit} onDeleteCardSchedule={onDeleteCardSchedule} />
           ))}
         </View>
       ) : (
@@ -1087,11 +1102,11 @@ function SchedulePanel({
 function ScheduleItemCard({
   item,
   onEdit,
-  onManageCard,
+  onDeleteCardSchedule,
 }: {
   item: DisplayScheduleItem;
   onEdit: (item: DisplayScheduleItem) => void;
-  onManageCard: (item: DisplayScheduleItem) => void;
+  onDeleteCardSchedule: (item: DisplayScheduleItem) => void;
 }) {
   if (item.source === 'CARD') {
     const participants = item.participants ?? [];
@@ -1104,12 +1119,12 @@ function ScheduleItemCard({
               {item.title}
             </Text>
             <Pressable
-              accessibilityLabel={`${item.title} 카드 일정 관리`}
+              accessibilityLabel={`${item.title} 카드 일정 삭제`}
               accessibilityRole="button"
               hitSlop={8}
-              onPress={() => onManageCard(item)}
+              onPress={() => onDeleteCardSchedule(item)}
               style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
-              <Pencil size={15} color={palette.primaryDeep} />
+              <Trash2 size={15} color={palette.primaryDeep} />
             </Pressable>
             <Chip label="약속 카드" tone="lime" />
           </View>
@@ -1164,14 +1179,10 @@ function ScheduleItemCard({
     );
   }
 
-  const color = getScheduleColor(item.colorKey);
+  const color = getManualScheduleColor(item.colorKey);
 
   return (
-    <Card style={[styles.manualScheduleCard, { backgroundColor: color.soft }]}>
-      <View style={[styles.manualDateBlock, { backgroundColor: color.accent }]}>
-        <Text style={styles.manualDateMonth}>{item.dateLabel.split(' ')[0]}</Text>
-        <Text style={styles.manualDateDay}>{item.dateLabel.split(' ')[1]}</Text>
-      </View>
+    <Card style={[styles.cardScheduleCard, styles.manualScheduleCard, { backgroundColor: color.soft }]}>
       <View style={styles.manualScheduleBody}>
         <View style={styles.manualScheduleTop}>
           <Text style={styles.manualScheduleTitle} numberOfLines={2}>
@@ -1187,11 +1198,11 @@ function ScheduleItemCard({
           </Pressable>
           <Chip label="직접 추가" tone="sky" />
         </View>
-        <View style={styles.manualInfoRow}>
+        <View style={styles.cardScheduleInfoRow}>
           <Clock3 size={15} color={palette.primaryDeep} />
           <Text style={styles.manualInfoText}>{item.timeLabel}</Text>
         </View>
-        <View style={styles.manualInfoRow}>
+        <View style={styles.cardScheduleInfoRow}>
           <MapPin size={15} color={palette.primaryDeep} />
           <Text style={styles.manualInfoText}>{item.location}</Text>
         </View>
@@ -1445,6 +1456,7 @@ function ComposerModal({
               {!isEditingCardSchedule ? (
                 <ColorPicker
                   label="카드 색상"
+                  options={scheduleColorOptions}
                   value={scheduleColor}
                   onChange={onChangeScheduleColor}
                 />
@@ -1511,10 +1523,12 @@ function ComposerModal({
 
 function ColorPicker({
   label,
+  options = colorOptions,
   value,
   onChange,
 }: {
   label: string;
+  options?: ScheduleColorOption[];
   value: ScheduleColorKey;
   onChange: (value: ScheduleColorKey) => void;
 }) {
@@ -1522,7 +1536,7 @@ function ColorPicker({
     <View style={styles.colorPickerShell}>
       <Text style={styles.modalInputLabel}>{label}</Text>
       <View style={styles.colorOptions}>
-        {colorOptions.map((option) => {
+        {options.map((option) => {
           const selected = option.key === value;
 
           return (
@@ -1926,7 +1940,7 @@ const styles = StyleSheet.create({
   },
   cardScheduleCard: {
     alignItems: 'center',
-    backgroundColor: palette.mintSoft,
+    backgroundColor: palette.coralSoft,
     flexDirection: 'row',
     gap: spacing.md,
   },
@@ -2283,8 +2297,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 44,
-    paddingHorizontal: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: spacing.xs,
   },
   dialogPrimaryButton: {
     backgroundColor: palette.primary,
@@ -2299,6 +2313,8 @@ const styles = StyleSheet.create({
     color: palette.primaryDeep,
     fontSize: 14,
     fontWeight: '900',
+    lineHeight: 18,
+    textAlign: 'center',
   },
   dialogPrimaryActionText: {
     color: palette.onLight,

@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 
 import { getActivePromiseRepository } from '@/data/promiseRepository';
+import { getAccountScopedStorageKey } from '@/lib/accountScopedStorage';
 import {
   buildPromiseDataCache,
   createPromiseDataRefreshChannelName,
@@ -16,7 +17,7 @@ import {
 } from '@/lib/promiseDataState';
 import { supabase } from '@/lib/supabase';
 
-const PROMISE_DATA_CACHE_KEY = '@whenbollae/promise-data-cache/v1';
+const PROMISE_DATA_CACHE_PREFIX = '@whenbollae/promise-data-cache/v1';
 const PROMISE_DATA_RELOAD_DEBOUNCE_MS = 900;
 const PROMISE_DATA_RELOAD_MIN_INTERVAL_MS = 30_000;
 
@@ -30,12 +31,25 @@ const initialState: PromiseDataState = {
   error: null,
 };
 
+async function getPromiseDataCacheKey() {
+  const authSession = await supabase?.auth.getSession();
+
+  return getAccountScopedStorageKey(PROMISE_DATA_CACHE_PREFIX, authSession?.data.session?.user.id ?? null);
+}
+
 export function usePromiseData() {
   const [state, setState] = useState<PromiseDataState>(initialState);
   const isMountedRef = useRef(false);
+  const activeCacheKeyRef = useRef<string | null>(null);
   const lastSnapshotKeyRef = useRef<string | null>(null);
   const lastLoadedAtMsRef = useRef<number | null>(null);
   const lastSyncVersionRef = useRef<string | null>(null);
+
+  const resetLoadedDataRefs = useCallback(() => {
+    lastSnapshotKeyRef.current = null;
+    lastLoadedAtMsRef.current = null;
+    lastSyncVersionRef.current = null;
+  }, []);
 
   const applyPayload = useCallback((payload: PromiseDataPayload) => {
     const nextSnapshotKey = getPromiseDataSnapshotKey(payload);
@@ -70,15 +84,38 @@ export function usePromiseData() {
   }, []);
 
   const hydrateCache = useCallback(async () => {
-    const cachedPayload = parsePromiseDataCache(await AsyncStorage.getItem(PROMISE_DATA_CACHE_KEY));
+    const cacheKey = await getPromiseDataCacheKey();
+    const didChangeCacheKey = activeCacheKeyRef.current !== cacheKey;
+
+    if (didChangeCacheKey) {
+      activeCacheKeyRef.current = cacheKey;
+      resetLoadedDataRefs();
+    }
+
+    const cachedPayload = parsePromiseDataCache(await AsyncStorage.getItem(cacheKey));
 
     if (cachedPayload && isMountedRef.current) {
       applyPayload(cachedPayload);
+    } else if (didChangeCacheKey && isMountedRef.current) {
+      setState(initialState);
     }
-  }, [applyPayload]);
+  }, [applyPayload, resetLoadedDataRefs]);
 
   const load = useCallback(async (options: { force?: boolean } = {}) => {
+    let cacheKey: string | null = null;
+
     try {
+      cacheKey = await getPromiseDataCacheKey();
+
+      if (activeCacheKeyRef.current !== cacheKey) {
+        activeCacheKeyRef.current = cacheKey;
+        resetLoadedDataRefs();
+
+        if (isMountedRef.current) {
+          setState(initialState);
+        }
+      }
+
       const nowMs = Date.now();
 
       if (
@@ -129,20 +166,18 @@ export function usePromiseData() {
         syncVersion,
       };
 
-      if (isMountedRef.current) {
+      if (isMountedRef.current && activeCacheKeyRef.current === cacheKey) {
         applyPayload(payload);
         lastLoadedAtMsRef.current = nowMs;
-        await AsyncStorage.setItem(PROMISE_DATA_CACHE_KEY, buildPromiseDataCache(payload));
+        await AsyncStorage.setItem(cacheKey, buildPromiseDataCache(payload));
       }
     } catch (error) {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && (!cacheKey || activeCacheKeyRef.current === cacheKey)) {
         setState((current) => getPromiseDataLoadErrorState(current, error));
-        lastSnapshotKeyRef.current = null;
-        lastLoadedAtMsRef.current = null;
-        lastSyncVersionRef.current = null;
+        resetLoadedDataRefs();
       }
     }
-  }, [applyPayload]);
+  }, [applyPayload, resetLoadedDataRefs]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -172,15 +207,16 @@ export function usePromiseData() {
     } =
       supabase?.auth.onAuthStateChange((event) => {
         if (event === 'SIGNED_OUT') {
-          lastSnapshotKeyRef.current = null;
-          lastLoadedAtMsRef.current = null;
-          lastSyncVersionRef.current = null;
-          void AsyncStorage.removeItem(PROMISE_DATA_CACHE_KEY);
+          activeCacheKeyRef.current = null;
+          resetLoadedDataRefs();
           setState(initialState);
           return;
         }
 
-        void load({ force: true });
+        void (async () => {
+          await hydrateCache();
+          await load({ force: true });
+        })();
       }) ?? { data: { subscription: null } };
     const dataChangeChannel = supabase
       ?.channel(createPromiseDataRefreshChannelName())
@@ -191,6 +227,9 @@ export function usePromiseData() {
         scheduleLoad({ force: true }),
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointment_candidate_responses' }, () =>
+        scheduleLoad({ force: true }),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'card_recipients' }, () =>
         scheduleLoad({ force: true }),
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () =>
@@ -207,7 +246,7 @@ export function usePromiseData() {
       subscription?.unsubscribe();
       void dataChangeChannel?.unsubscribe();
     };
-  }, [hydrateCache, load]);
+  }, [hydrateCache, load, resetLoadedDataRefs]);
 
   return {
     ...state,

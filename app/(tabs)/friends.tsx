@@ -83,7 +83,7 @@ export default function FriendsScreen() {
     const handle = normalizeFriendHandle(friendInput);
 
     if (handle.length === 0) {
-      setFriendInputError('친구 아이디나 프로필 링크를 입력해 주세요.');
+      setFriendInputError('친구 아이디를 입력해 주세요.');
       return;
     }
 
@@ -489,14 +489,14 @@ function AddFriendModal({
             <View style={styles.modalInputShell}>
               <View style={styles.modalInputLabelRow}>
                 <Search size={16} color={palette.primaryDeep} />
-                <Text style={styles.modalInputLabel}>아이디 또는 프로필 링크</Text>
+                <Text style={styles.modalInputLabel}>친구 아이디 입력</Text>
               </View>
               <TextInput
-                accessibilityLabel="친구 아이디 또는 프로필 링크"
+                accessibilityLabel="친구 아이디 입력"
                 autoCapitalize="none"
                 autoCorrect={false}
                 onChangeText={onChangeFriendInput}
-                placeholder="@handle 또는 whenbollae.app/@handle"
+                placeholder="@ae6ee6"
                 placeholderTextColor={palette.inkSoft}
                 style={styles.modalInput}
                 value={friendInput}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getActiveScheduleRepository } from '@/data/scheduleRepository';
+import { getAccountScopedStorageKey } from '@/lib/accountScopedStorage';
 import {
   applyManualScheduleMutations,
   buildSchedulePlannerCache,
@@ -30,7 +31,7 @@ interface SchedulePlannerState {
   error: string | null;
 }
 
-const SCHEDULE_PLANNER_CACHE_KEY = '@whenbollae/schedule-planner-cache/v1';
+const SCHEDULE_PLANNER_CACHE_PREFIX = '@whenbollae/schedule-planner-cache/v1';
 
 const initialState: SchedulePlannerState = {
   manualScheduleItems: [],
@@ -59,6 +60,12 @@ function toCachePayload(state: SchedulePlannerState) {
     persisted: state.persisted,
     syncedAt: state.syncedAt,
   };
+}
+
+async function getSchedulePlannerCacheKey() {
+  const authSession = await supabase?.auth.getSession();
+
+  return getAccountScopedStorageKey(SCHEDULE_PLANNER_CACHE_PREFIX, authSession?.data.session?.user.id ?? null);
 }
 
 interface FlushPendingMutationsResult {
@@ -141,11 +148,15 @@ function mergePendingMutationsAfterFlush(
 export function useSchedulePlanner() {
   const [state, setState] = useState<SchedulePlannerState>(initialState);
   const stateRef = useRef(initialState);
+  const activeCacheKeyRef = useRef<string | null>(null);
 
   const commitState = useCallback((nextState: SchedulePlannerState) => {
     stateRef.current = nextState;
     setState(nextState);
-    void AsyncStorage.setItem(SCHEDULE_PLANNER_CACHE_KEY, buildSchedulePlannerCache(toCachePayload(nextState)));
+
+    if (activeCacheKeyRef.current) {
+      void AsyncStorage.setItem(activeCacheKeyRef.current, buildSchedulePlannerCache(toCachePayload(nextState)));
+    }
   }, []);
 
   const updateState = useCallback(
@@ -158,6 +169,18 @@ export function useSchedulePlanner() {
   );
 
   const syncWithRepository = useCallback(async () => {
+    const cacheKey = activeCacheKeyRef.current;
+
+    if (!cacheKey) {
+      return;
+    }
+
+    const commitIfCurrentAccount = (nextState: SchedulePlannerState) => {
+      if (activeCacheKeyRef.current === cacheKey) {
+        commitState(nextState);
+      }
+    };
+
     try {
       const { persisted, repository } = await getActiveScheduleRepository();
       const current = stateRef.current;
@@ -180,7 +203,7 @@ export function useSchedulePlanner() {
       );
       const manualScheduleItems = applyManualScheduleMutations(serverManualScheduleItems, pendingMutations);
 
-      commitState({
+      commitIfCurrentAccount({
         ...stateRef.current,
         manualScheduleItems,
         todos,
@@ -192,7 +215,7 @@ export function useSchedulePlanner() {
         error: null,
       });
     } catch (error) {
-      commitState({
+      commitIfCurrentAccount({
         ...stateRef.current,
         isLoading: false,
         isMutating: false,
@@ -206,7 +229,23 @@ export function useSchedulePlanner() {
 
     async function load() {
       try {
-        const cachedPayload = parseSchedulePlannerCache(await AsyncStorage.getItem(SCHEDULE_PLANNER_CACHE_KEY));
+        const cacheKey = await getSchedulePlannerCacheKey();
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (activeCacheKeyRef.current !== cacheKey) {
+          activeCacheKeyRef.current = cacheKey;
+          stateRef.current = initialState;
+          setState(initialState);
+        }
+
+        const cachedPayload = parseSchedulePlannerCache(await AsyncStorage.getItem(cacheKey));
+
+        if (activeCacheKeyRef.current !== cacheKey) {
+          return;
+        }
 
         if (cachedPayload && isMounted) {
           commitState({

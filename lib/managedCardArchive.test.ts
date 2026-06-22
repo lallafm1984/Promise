@@ -29,14 +29,30 @@ describe('managed card archive', () => {
     const cache = buildManagedCardArchiveCache({
       localCards: [buildCard('card-1')],
       removedCardIds: ['removed-card'],
+      hiddenPastCardIds: ['past-card'],
+      hiddenReceivedReplyCardIds: ['replied-card'],
       updatedAt: '2026-06-20T10:00:00.000Z',
     });
 
     expect(parseManagedCardArchiveCache(cache)).toEqual({
       localCards: [buildCard('card-1')],
       removedCardIds: ['removed-card'],
+      hiddenPastCardIds: ['past-card'],
+      hiddenReceivedReplyCardIds: ['replied-card'],
       updatedAt: '2026-06-20T10:00:00.000Z',
     });
+  });
+
+  it('defaults hidden id lists for older archive caches', () => {
+    const cache = JSON.stringify({
+      version: 1,
+      localCards: [buildCard('card-1')],
+      removedCardIds: ['removed-card'],
+      updatedAt: '2026-06-20T10:00:00.000Z',
+    });
+
+    expect(parseManagedCardArchiveCache(cache)?.hiddenPastCardIds).toEqual([]);
+    expect(parseManagedCardArchiveCache(cache)?.hiddenReceivedReplyCardIds).toEqual([]);
   });
 
   it('ignores malformed archives instead of crashing hydration', () => {

@@ -4,6 +4,11 @@ const asyncStorageValues = new Map<string, string>();
 const upsertNotificationToken = vi.fn();
 const deleteNotificationToken = vi.fn();
 const deleteNotificationTokenEq = vi.fn();
+const rpc = vi.fn();
+const channel = vi.fn();
+const channelOn = vi.fn();
+const channelSubscribe = vi.fn();
+const channelUnsubscribe = vi.fn();
 const getExpoPushTokenAsync = vi.fn();
 const getAllScheduledNotificationsAsync = vi.fn();
 const getLastNotificationResponse = vi.fn();
@@ -25,6 +30,12 @@ const buildReminderSchedulePlan = vi.fn();
 const mockPlatform = {
   OS: 'android',
 };
+const notificationEnabledKey = 'whenbollae:notifications:enabled:profile-minseo';
+const seenFriendRequestIdsKey = 'whenbollae:notifications:seen-friend-request-ids:profile-minseo';
+const seenFriendIdsKey = 'whenbollae:notifications:seen-friend-ids:profile-minseo';
+const seenCardIdsKey = 'whenbollae:notifications:seen-card-ids:profile-minseo';
+const reminderIdsKey = 'whenbollae:notifications:reminder-ids:profile-minseo';
+const expoPushTokenKey = 'whenbollae:notifications:expo-push-token';
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
@@ -121,6 +132,7 @@ vi.mock('@/lib/supabase', () => ({
         }),
       ),
     },
+    channel,
     from: vi.fn((table: string) => {
       if (table !== 'notification_tokens') {
         throw new Error(`Unexpected table: ${table}`);
@@ -131,12 +143,30 @@ vi.mock('@/lib/supabase', () => ({
         upsert: upsertNotificationToken,
       };
     }),
+    rpc,
   },
 }));
 
 describe('app notification registration', () => {
   beforeEach(() => {
     asyncStorageValues.clear();
+    rpc.mockReset().mockResolvedValue({ error: null });
+    channelOn.mockReset().mockReturnValue({
+      on: channelOn,
+      subscribe: channelSubscribe,
+      unsubscribe: channelUnsubscribe,
+    });
+    channelSubscribe.mockReset().mockReturnValue({
+      on: channelOn,
+      subscribe: channelSubscribe,
+      unsubscribe: channelUnsubscribe,
+    });
+    channelUnsubscribe.mockReset().mockResolvedValue(undefined);
+    channel.mockReset().mockReturnValue({
+      on: channelOn,
+      subscribe: channelSubscribe,
+      unsubscribe: channelUnsubscribe,
+    });
     upsertNotificationToken.mockReset().mockResolvedValue({ error: null });
     deleteNotificationTokenEq.mockReset();
     const deleteQuery = { eq: deleteNotificationTokenEq };
@@ -165,13 +195,13 @@ describe('app notification registration', () => {
       data: { url: '/manage', type: 'card_received', id: card.id },
     }));
     buildFriendAcceptedNotification.mockReset().mockImplementation((friend) => ({
-      title: '친구 추가 완료',
-      body: `${friend.displayName}님과 친구가 되었어요.`,
+      title: '친구가 되었어요',
+      body: `${friend.displayName}와 친구가 되었어요.`,
       data: { url: '/friends', type: 'friend_accepted', id: friend.id },
     }));
     buildFriendRequestNotification.mockReset().mockImplementation((request) => ({
-      title: '새 친구 요청',
-      body: `${request.displayName}님이 친구를 요청했어요.`,
+      title: '친구 요청이 왔어요',
+      body: `${request.displayName}님에게서 친구 요청이 왔어요.`,
       data: { url: '/friends', type: 'friend_request', id: request.id },
     }));
     buildReminderSchedulePlan.mockReset().mockReturnValue({
@@ -182,7 +212,7 @@ describe('app notification registration', () => {
   });
 
   it('registers an Expo push token when notifications are already enabled and permission is granted', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
     const { syncPushTokenRegistration } = await import('./appNotifications');
 
     await expect(syncPushTokenRegistration()).resolves.toBe('ExponentPushToken[test-token]');
@@ -206,25 +236,50 @@ describe('app notification registration', () => {
 
     expect(getExpoPushTokenAsync).not.toHaveBeenCalled();
     expect(upsertNotificationToken).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('does not read another account notification setting as the current account setting', async () => {
+    asyncStorageValues.set('whenbollae:notifications:enabled:profile-other', 'true');
+    const { isAppNotificationEnabled } = await import('./appNotifications');
+
+    await expect(isAppNotificationEnabled()).resolves.toBe(false);
   });
 
   it('turns off the app notification setting when the phone permission is no longer granted', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
-    asyncStorageValues.set('whenbollae:notifications:expo-push-token', 'ExponentPushToken[test-token]');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(expoPushTokenKey, 'ExponentPushToken[test-token]');
     getPermissionsAsync.mockResolvedValueOnce({ status: 'denied' });
     const { syncPushTokenRegistration } = await import('./appNotifications');
 
     await expect(syncPushTokenRegistration()).resolves.toBeNull();
 
     expect(deleteNotificationToken).toHaveBeenCalled();
-    expect(asyncStorageValues.get('whenbollae:notifications:enabled')).toBe('false');
-    expect(asyncStorageValues.has('whenbollae:notifications:expo-push-token')).toBe(false);
+    expect(asyncStorageValues.get(notificationEnabledKey)).toBe('false');
+    expect(asyncStorageValues.has(expoPushTokenKey)).toBe(false);
     expect(getExpoPushTokenAsync).not.toHaveBeenCalled();
     expect(upsertNotificationToken).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('claims an existing Expo push token for the current account before upserting it', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    const { syncPushTokenRegistration } = await import('./appNotifications');
+
+    await syncPushTokenRegistration();
+
+    expect(rpc).toHaveBeenCalledWith(
+      'register_notification_token',
+      expect.objectContaining({
+        notification_provider: 'expo',
+        notification_token: 'ExponentPushToken[test-token]',
+      }),
+    );
+    expect(rpc.mock.invocationCallOrder[0]).toBeLessThan(upsertNotificationToken.mock.invocationCallOrder[0]);
   });
 
   it('sends a test phone notification when the app notification setting is on', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
     const { sendTestAppNotification } = await import('./appNotifications');
 
     await sendTestAppNotification();
@@ -262,11 +317,62 @@ describe('app notification registration', () => {
     expect(removeNotificationResponseReceivedListener).not.toHaveBeenCalled();
   });
 
+  it('refreshes social notifications immediately when the current account receives social database changes', async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const { installSocialNotificationRealtimeRefresh } = await import('./appNotifications');
+
+    const cleanup = await installSocialNotificationRealtimeRefresh(refresh);
+
+    expect(channel).toHaveBeenCalledWith(expect.stringMatching(/^whenbollae-social-notifications-profile-minseo-/));
+    expect(channelOn).toHaveBeenCalledWith(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'card_recipients',
+        filter: 'recipient_profile_id=eq.profile-minseo',
+      },
+      expect.any(Function),
+    );
+    expect(channelOn).toHaveBeenCalledWith(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'friend_requests',
+        filter: 'addressee_id=eq.profile-minseo',
+      },
+      expect.any(Function),
+    );
+    expect(channelOn).toHaveBeenCalledWith(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'friend_requests',
+        filter: 'requester_id=eq.profile-minseo',
+      },
+      expect.any(Function),
+    );
+    expect(channelSubscribe).toHaveBeenCalled();
+
+    for (const call of channelOn.mock.calls) {
+      const handler = call[2] as (() => void) | undefined;
+      handler?.();
+    }
+    await Promise.resolve();
+
+    expect(refresh).toHaveBeenCalledTimes(3);
+
+    cleanup();
+    expect(channelUnsubscribe).toHaveBeenCalled();
+  });
+
   it('shows phone notifications for new friend requests, accepted friends, and received cards', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
-    asyncStorageValues.set('whenbollae:notifications:seen-friend-request-ids', '["request-old"]');
-    asyncStorageValues.set('whenbollae:notifications:seen-friend-ids', '["friend-old"]');
-    asyncStorageValues.set('whenbollae:notifications:seen-card-ids', '["card-old"]');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(seenFriendRequestIdsKey, '["request-old"]');
+    asyncStorageValues.set(seenFriendIdsKey, '["friend-old"]');
+    asyncStorageValues.set(seenCardIdsKey, '["card-old"]');
     listFriendState.mockResolvedValueOnce({
       friends: [
         {
@@ -310,7 +416,7 @@ describe('app notification registration', () => {
     expect(scheduleNotificationAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         content: expect.objectContaining({
-          title: '새 친구 요청',
+          title: '친구 요청이 왔어요',
           data: { url: '/friends', type: 'friend_request', id: 'request-harin' },
         }),
         trigger: { channelId: 'whenbollae-default' },
@@ -319,7 +425,7 @@ describe('app notification registration', () => {
     expect(scheduleNotificationAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         content: expect.objectContaining({
-          title: '친구 추가 완료',
+          title: '친구가 되었어요',
           data: { url: '/friends', type: 'friend_accepted', id: 'friend-jiu' },
         }),
         trigger: { channelId: 'whenbollae-default' },
@@ -334,13 +440,13 @@ describe('app notification registration', () => {
         trigger: { channelId: 'whenbollae-default' },
       }),
     );
-    expect(asyncStorageValues.get('whenbollae:notifications:seen-friend-request-ids')).toBe('["request-harin"]');
-    expect(asyncStorageValues.get('whenbollae:notifications:seen-friend-ids')).toBe('["friend-jiu"]');
-    expect(asyncStorageValues.get('whenbollae:notifications:seen-card-ids')).toBe('["card-seongsu"]');
+    expect(asyncStorageValues.get(seenFriendRequestIdsKey)).toBe('["request-harin"]');
+    expect(asyncStorageValues.get(seenFriendIdsKey)).toBe('["friend-jiu"]');
+    expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-seongsu"]');
   });
 
   it('schedules appointment reminder phone notifications on the reminder channel', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
     buildReminderSchedulePlan.mockReturnValueOnce({
       cancelIdentifiers: ['old-reminder-id'],
       keptReminders: {
@@ -401,7 +507,7 @@ describe('app notification registration', () => {
         channelId: 'whenbollae-reminders',
       },
     });
-    expect(JSON.parse(asyncStorageValues.get('whenbollae:notifications:reminder-ids') ?? '{}')).toEqual({
+    expect(JSON.parse(asyncStorageValues.get(reminderIdsKey) ?? '{}')).toEqual({
       'card-kept': {
         identifier: 'kept-reminder-id',
         fireDate: '2026-06-20T09:30:00.000Z',
@@ -422,7 +528,7 @@ describe('app notification registration', () => {
   });
 
   it('removes stale and duplicated appointment reminder notifications from the phone schedule', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
     buildReminderSchedulePlan.mockReturnValueOnce({
       cancelIdentifiers: [],
       scheduleItems: [],
@@ -486,7 +592,7 @@ describe('app notification registration', () => {
   });
 
   it('serializes concurrent appointment reminder refreshes to avoid duplicate scheduling', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
     const reminderRecord = {
       fireDate: '2026-06-20T09:30:00.000Z',
       reminderLead: '30_MIN' as const,
@@ -534,7 +640,7 @@ describe('app notification registration', () => {
     await Promise.all([scheduleAppointmentReminders(profile, []), scheduleAppointmentReminders(profile, [])]);
 
     expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(asyncStorageValues.get('whenbollae:notifications:reminder-ids') ?? '{}')).toEqual({
+    expect(JSON.parse(asyncStorageValues.get(reminderIdsKey) ?? '{}')).toEqual({
       'card-gangnam': {
         ...reminderRecord,
         identifier: 'test-notification-id',
@@ -543,8 +649,8 @@ describe('app notification registration', () => {
   });
 
   it('removes the current Expo push token from Supabase when notifications are disabled', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
-    asyncStorageValues.set('whenbollae:notifications:expo-push-token', 'ExponentPushToken[test-token]');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(expoPushTokenKey, 'ExponentPushToken[test-token]');
     const { disableAppNotifications } = await import('./appNotifications');
 
     await disableAppNotifications();
@@ -552,13 +658,13 @@ describe('app notification registration', () => {
     expect(deleteNotificationToken).toHaveBeenCalled();
     expect(deleteNotificationTokenEq).toHaveBeenNthCalledWith(1, 'provider', 'expo');
     expect(deleteNotificationTokenEq).toHaveBeenNthCalledWith(2, 'token', 'ExponentPushToken[test-token]');
-    expect(asyncStorageValues.get('whenbollae:notifications:enabled')).toBe('false');
-    expect(asyncStorageValues.has('whenbollae:notifications:expo-push-token')).toBe(false);
+    expect(asyncStorageValues.get(notificationEnabledKey)).toBe('false');
+    expect(asyncStorageValues.has(expoPushTokenKey)).toBe(false);
   });
 
   it('turns off the local notification setting even when token removal fails', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
-    asyncStorageValues.set('whenbollae:notifications:expo-push-token', 'ExponentPushToken[test-token]');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(expoPushTokenKey, 'ExponentPushToken[test-token]');
     const failingDeleteQuery = { error: new Error('토큰 삭제 실패'), eq: deleteNotificationTokenEq };
     deleteNotificationTokenEq.mockReturnValue(failingDeleteQuery);
     deleteNotificationToken.mockReturnValue(failingDeleteQuery);
@@ -566,13 +672,13 @@ describe('app notification registration', () => {
 
     await expect(disableAppNotifications()).rejects.toThrow('토큰 삭제 실패');
 
-    expect(asyncStorageValues.get('whenbollae:notifications:enabled')).toBe('false');
-    expect(asyncStorageValues.has('whenbollae:notifications:expo-push-token')).toBe(true);
+    expect(asyncStorageValues.get(notificationEnabledKey)).toBe('false');
+    expect(asyncStorageValues.has(expoPushTokenKey)).toBe(true);
   });
 
   it('reports the current local setting after a partial disable failure', async () => {
-    asyncStorageValues.set('whenbollae:notifications:enabled', 'true');
-    asyncStorageValues.set('whenbollae:notifications:expo-push-token', 'ExponentPushToken[test-token]');
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(expoPushTokenKey, 'ExponentPushToken[test-token]');
     const failingDeleteQuery = { error: new Error('토큰 삭제 실패'), eq: deleteNotificationTokenEq };
     deleteNotificationTokenEq.mockReturnValue(failingDeleteQuery);
     deleteNotificationToken.mockReturnValue(failingDeleteQuery);

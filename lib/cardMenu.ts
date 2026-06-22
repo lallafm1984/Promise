@@ -57,6 +57,12 @@ export interface ManagedCardAction {
   label: string;
 }
 
+export interface ReceivedCardResponseBadge {
+  key: string;
+  label: string;
+  choice: ReceivedCardResponseChoice;
+}
+
 export interface ApplyReceivedCardResponseInput {
   respondentId: string;
   respondentName: string;
@@ -522,20 +528,99 @@ function normalizeProfileText(value: string | undefined): string {
   return value?.trim().replace(/\s+/g, ' ') ?? '';
 }
 
-function hasCurrentProfileResponse(card: PromiseCard, currentProfile?: ManagedCardCurrentProfile): boolean {
+function getCurrentProfileParticipant(card: PromiseCard, currentProfile?: ManagedCardCurrentProfile): Participant | null {
   if (!currentProfile) {
-    return false;
+    return null;
   }
 
   const profileName = normalizeProfileText(currentProfile.displayName);
 
-  return card.participants.some((participant) => {
-    const isCurrentProfile =
-      participant.id === currentProfile.id || normalizeProfileText(participant.displayName) === profileName;
-    const isAnswered = participant.choice !== undefined && participant.choice !== 'UNANSWERED';
+  return (
+    card.participants.find(
+      (participant) => participant.id === currentProfile.id || normalizeProfileText(participant.displayName) === profileName,
+    ) ?? null
+  );
+}
 
-    return isCurrentProfile && isAnswered;
-  });
+function hasCurrentProfileResponse(card: PromiseCard, currentProfile?: ManagedCardCurrentProfile): boolean {
+  const participant = getCurrentProfileParticipant(card, currentProfile);
+
+  if (!participant) {
+    return false;
+  }
+
+  return (
+    (participant.choice !== undefined && participant.choice !== 'UNANSWERED') ||
+    (participant.responses?.some((response) => response.choice !== 'UNANSWERED') ?? false)
+  );
+}
+
+export function getReceivedCardResponseSummary(
+  card: PromiseCard,
+  currentProfile?: ManagedCardCurrentProfile,
+): string | null {
+  const badges = getReceivedCardResponseBadges(card, currentProfile);
+
+  if (badges.length === 0) {
+    return null;
+  }
+
+  return `내 답장: ${badges.map((badge) => badge.label).join(' · ')}`;
+}
+
+export function getReceivedCardResponseBadges(
+  card: PromiseCard,
+  currentProfile?: ManagedCardCurrentProfile,
+): ReceivedCardResponseBadge[] {
+  if (getManagedCardScope(card) !== 'RECEIVED') {
+    return [];
+  }
+
+  const participant = getCurrentProfileParticipant(card, currentProfile);
+
+  if (!participant || !hasCurrentProfileResponse(card, currentProfile)) {
+    return [];
+  }
+
+  const responseByCandidateId = new Map(participant.responses?.map((response) => [response.candidateId, response.choice]));
+
+  if (card.candidates.length <= 1) {
+    const candidate = card.candidates[0];
+    const choice = candidate ? responseByCandidateId.get(candidate.id) : undefined;
+    const displayChoice = choice ?? participant.choice ?? 'UNANSWERED';
+
+    if (displayChoice === 'UNANSWERED') {
+      return [];
+    }
+
+    return [
+      {
+        key: candidate?.id ?? 'direct',
+        label: getResponseChoiceLabel(displayChoice),
+        choice: displayChoice,
+      },
+    ];
+  }
+
+  return card.candidates
+    .map((candidate) => {
+      const choice = responseByCandidateId.get(candidate.id);
+
+      if (!choice || choice === 'UNANSWERED') {
+        return null;
+      }
+
+      return {
+        key: candidate.id,
+        label: `${candidate.shortLabel || candidate.label} ${getResponseChoiceLabel(choice)}`,
+        choice,
+      };
+    })
+    .filter((badge): badge is ReceivedCardResponseBadge => Boolean(badge));
+}
+
+export function shouldShowManagedCardRowMeta(card: PromiseCard): boolean {
+  return getManagedCardScope(card) === 'SENT' && getManagedCardResponseStats(card).total > 0;
 }
 
 export function getManagedCardInboxTab(
@@ -599,7 +684,7 @@ export function getManagedCardRowMetaLabel(card: PromiseCard, currentProfile?: M
   const stats = getManagedCardResponseStats(card);
 
   if (stats.total === 0) {
-    return '아직 응답 없음';
+    return '';
   }
 
   const parts = [`응답 ${stats.total}명`];
@@ -644,12 +729,20 @@ export function getManagedStatusGroup(card: PromiseCard, now = new Date()): Mana
   return 'PAST';
 }
 
-export function getManagedCardAction(card: PromiseCard, now = new Date()): ManagedCardAction {
+export function getManagedCardAction(
+  card: PromiseCard,
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): ManagedCardAction | null {
   if (card.requesterName) {
     const group = getManagedStatusGroup(card, now);
 
     if (group === 'CONFIRMED') {
       return { kind: 'SCHEDULE', label: '일정 보기' };
+    }
+
+    if (hasCurrentProfileResponse(card, currentProfile)) {
+      return null;
     }
 
     return { kind: 'OPEN_RECEIVED', label: '카드 열기' };
@@ -737,7 +830,31 @@ export function mergeManagedCards(ownedCards: PromiseCard[], receivedCards: Prom
 }
 
 export function canDeleteManagedCard(card: PromiseCard, now = new Date()): boolean {
-  return getManagedCardScope(card) === 'SENT' && ['PENDING', 'VOTING'].includes(getManagedStatusGroup(card, now));
+  return getManagedCardScope(card) === 'SENT' && ['PENDING', 'VOTING', 'CONFIRMED'].includes(getManagedStatusGroup(card, now));
+}
+
+export function canDeleteResponseActionCard(
+  card: PromiseCard,
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): boolean {
+  return getManagedCardInboxTab(card, now, currentProfile) === 'SENT_HAS_RESPONSE';
+}
+
+export function canDeleteReceivedRepliedCard(
+  card: PromiseCard,
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): boolean {
+  return getManagedCardInboxTab(card, now, currentProfile) === 'RECEIVED_REPLIED';
+}
+
+export function canHideReceivedManagedCard(card: PromiseCard): boolean {
+  return getManagedCardScope(card) === 'RECEIVED';
+}
+
+export function canHideManagedPastCard(card: PromiseCard, now = new Date()): boolean {
+  return getManagedStatusGroup(card, now) === 'PAST';
 }
 
 export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleItem | null {

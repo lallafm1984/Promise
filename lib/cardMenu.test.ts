@@ -5,6 +5,8 @@ import {
   buildShareMessage,
   CARD_RESPONSE_WINDOW_NOTICE,
   buildConfirmedCard,
+  buildCardScheduleTitle,
+  buildScheduleLabels,
   buildScheduleItemFromConfirmedCard,
   canHideManagedPastCard,
   canHideReceivedManagedCard,
@@ -21,6 +23,7 @@ import {
   formatCandidateResponseSummary,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
+  formatDraftTimeInputValue,
   getCandidateEndsAt,
   getGeneratedCardTitle,
   getCardExpiresAt,
@@ -42,6 +45,7 @@ import {
   getRecommendedConfirmationCandidate,
   getRecipientProfileIds,
   getResponseChoiceLabel,
+  getScheduleParticipantsForViewer,
   getSentResponseArrivalCards,
   getShareUrlForClipboard,
   getShareUrlForMessage,
@@ -51,6 +55,7 @@ import {
   mergeDraftDatePart,
   mergeDraftTimePart,
   removeDraftTimeAtIndex,
+  shouldShowCardLocationDetail,
   shouldShowManagedCardRowMeta,
   validateCardDraft,
 } from './cardMenu';
@@ -222,6 +227,17 @@ describe('card menu helpers', () => {
     expect(ensureDraftTimeCount([june14At1930], 2)).toHaveLength(2);
     expect(formatDraftDateTimeLabel(june14At1930)).toBe('6월 14일 19:30');
     expect(formatDraftDateTimeShortLabel(june14At1930)).toBe('6/14 19:30');
+    expect(buildScheduleLabels(june14At1930, getCandidateEndsAt(june14At1930))).toEqual({
+      dateLabel: '6월 14일',
+      timeLabel: '19:30',
+    });
+    expect(formatDraftDateTimeLabel('2026-06-24T10:00:00')).toBe('6월 24일 19:00');
+    expect(formatDraftTimeInputValue('2026-06-24T10:00:00')).toBe('19:00');
+    expect(buildScheduleLabels('2026-06-24T10:00:00', '2026-06-24T11:00:00')).toEqual({
+      dateLabel: '6월 24일',
+      timeLabel: '19:00',
+    });
+    expect(buildCardScheduleTitle('성수 카페')).toBe('성수 카페에서 약속');
     expect(mergeDraftDatePart(june14At1930, '2026-06-20')).toBe(localIso(6, 20, 19, 30));
     expect(mergeDraftTimePart(june14At1930, '20:15')).toBe(localIso(6, 14, 20, 15));
     expect(getCandidateEndsAt(june14At1930)).toBe(localIso(6, 14, 20, 30));
@@ -674,6 +690,27 @@ describe('card menu helpers', () => {
     expect(shouldShowManagedCardRowMeta(receivedRepliedCard)).toBe(false);
   });
 
+  it('hides separate location details when the card title already includes the location', () => {
+    expect(
+      shouldShowCardLocationDetail({
+        title: '6월 24일 19:00에 성수 카페에서 볼래?',
+        location: '성수 카페',
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowCardLocationDetail({
+        title: '성수 카페에서 언제볼래?',
+        location: '성수 카페',
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowCardLocationDetail({
+        title: '가볍게 볼래?',
+        location: '성수 카페',
+      }),
+    ).toBe(true);
+  });
+
   it('allows deleting active sent managed cards until they move to past appointments', () => {
     const pastOwnerCard: PromiseCard = {
       ...baseCard,
@@ -807,16 +844,24 @@ describe('card menu helpers', () => {
     expect(buildScheduleItemFromConfirmedCard(receivedConfirmedCard)).toEqual({
       id: 'schedule-card-test',
       cardId: 'card-test',
-      title: '하린 · 성수 카페',
+      title: '성수 카페에서 약속',
       startsAt: june14At1930,
       endsAt: getCandidateEndsAt(june14At1930),
       dateLabel: '6월 14일',
-      timeLabel: '19:30 - 20:30',
+      timeLabel: '19:30',
       location: '성수 카페',
       status: 'REMINDER_ON',
       selectedSlotId: 'slot-1',
       candidates: receivedConfirmedCard.candidates,
       participants: [
+        {
+          id: 'requester-card-test',
+          name: '하',
+          displayName: '하린',
+          color: '#DDEBFF',
+          choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+        },
         {
           id: 'profile-minseo',
           name: '민',
@@ -831,6 +876,158 @@ describe('card menu helpers', () => {
 
     expect(buildScheduleItemFromConfirmedCard({ ...receivedConfirmedCard, selectedSlotId: 'missing' })).toBeNull();
     expect(buildScheduleItemFromConfirmedCard({ ...receivedConfirmedCard, status: 'VOTING' })).toBeNull();
+  });
+
+  it('builds received schedule labels from selected timestamps instead of stale card labels', () => {
+    const receivedConfirmedCard: PromiseCard = {
+      ...baseCard,
+      status: 'CONFIRMED',
+      requesterName: '하린',
+      candidates: [
+        {
+          ...baseCard.candidates[0],
+          label: '7월 1일 09:00',
+          shortLabel: '7.1 09:00',
+        },
+      ],
+    };
+
+    expect(buildScheduleItemFromConfirmedCard(receivedConfirmedCard)).toMatchObject({
+      dateLabel: '6월 14일',
+      timeLabel: '19:30',
+      startsAt: june14At1930,
+      endsAt: getCandidateEndsAt(june14At1930),
+    });
+  });
+
+  it('shows every other participant on a card schedule and hides the current viewer', () => {
+    const receivedConfirmedCard: PromiseCard = {
+      ...baseCard,
+      status: 'CONFIRMED',
+      requesterName: '하린',
+      participants: [
+        {
+          id: 'profile-minseo',
+          name: '민',
+          displayName: '민서',
+          color: '#FFD6E7',
+          choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+        },
+        {
+          id: 'profile-jiwoo',
+          name: '지',
+          displayName: '지우',
+          comment: '시간 맞춰 갈게요',
+          color: '#CFF3E3',
+          choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+        },
+      ],
+    };
+
+    expect(
+      buildScheduleItemFromConfirmedCard(receivedConfirmedCard, { id: 'profile-minseo', displayName: '민서' })
+        ?.participants,
+    ).toEqual([
+      {
+        id: 'requester-card-test',
+        name: '하',
+        displayName: '하린',
+        color: '#DDEBFF',
+        choice: 'YES',
+        responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+      },
+      {
+        id: 'profile-jiwoo',
+        name: '지',
+        displayName: '지우',
+        comment: '시간 맞춰 갈게요',
+        color: '#CFF3E3',
+        choice: 'YES',
+        responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+      },
+    ]);
+  });
+
+  it('keeps invited participants visible on the schedule even before they respond', () => {
+    const participants = [
+      {
+        id: 'profile-minseo',
+        name: 'M',
+        displayName: 'Minseo',
+        color: '#FFD6E7',
+        choice: 'YES' as const,
+        responses: [{ candidateId: 'slot-1', choice: 'YES' as const }],
+      },
+      {
+        id: 'profile-jiwoo',
+        name: 'J',
+        displayName: 'Jiwoo',
+        color: '#CFF3E3',
+        choice: 'UNANSWERED' as const,
+        responses: [{ candidateId: 'slot-1', choice: 'UNANSWERED' as const }],
+      },
+    ];
+    const scheduleCard: PromiseCard = {
+      ...baseCard,
+      status: 'CONFIRMED',
+      participants,
+    };
+
+    expect(
+      buildScheduleItemFromConfirmedCard(scheduleCard, { id: 'profile-minseo', displayName: 'Minseo' })?.participants,
+    ).toEqual([
+      {
+        id: 'profile-jiwoo',
+        name: 'J',
+        displayName: 'Jiwoo',
+        color: '#CFF3E3',
+        choice: 'UNANSWERED',
+        responses: [{ candidateId: 'slot-1', choice: 'UNANSWERED' }],
+      },
+    ]);
+    expect(getScheduleParticipantsForViewer(participants, { id: 'profile-minseo', displayName: 'Minseo' })).toHaveLength(
+      1,
+    );
+  });
+
+  it('shows the card creator on a confirmed received-card schedule', () => {
+    const receivedConfirmedCard: PromiseCard = {
+      ...baseCard,
+      status: 'CONFIRMED',
+      requesterName: 'Harin',
+      participants: [
+        {
+          id: 'profile-minseo',
+          name: 'M',
+          displayName: 'Minseo',
+          color: '#FFD6E7',
+          choice: 'YES',
+          responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+        },
+        {
+          id: 'profile-jiwoo',
+          name: 'J',
+          displayName: 'Jiwoo',
+          color: '#CFF3E3',
+          choice: 'UNANSWERED',
+          responses: [{ candidateId: 'slot-1', choice: 'UNANSWERED' }],
+        },
+      ],
+    };
+
+    expect(
+      buildScheduleItemFromConfirmedCard(receivedConfirmedCard, { id: 'profile-minseo', displayName: 'Minseo' })
+        ?.participants?.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          choice: participant.choice,
+        })),
+    ).toEqual([
+      { id: 'requester-card-test', displayName: 'Harin', choice: 'YES' },
+      { id: 'profile-jiwoo', displayName: 'Jiwoo', choice: 'UNANSWERED' },
+    ]);
   });
 
   it('uses the selected candidate response when showing confirmed poll participants', () => {

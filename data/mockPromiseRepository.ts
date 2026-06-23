@@ -166,7 +166,7 @@ let schedule: ScheduleItem[] = [
     startsAt: '2026-06-14T19:30:00+09:00',
     endsAt: '2026-06-14T20:30:00+09:00',
     dateLabel: '6월 14일',
-    timeLabel: '19:30 - 20:30',
+    timeLabel: '19:30',
     location: '성수 카페',
     status: 'WAITING',
     participants: [
@@ -187,7 +187,7 @@ let schedule: ScheduleItem[] = [
     startsAt: '2026-06-20T17:00:00+09:00',
     endsAt: '2026-06-20T19:20:00+09:00',
     dateLabel: '6월 20일',
-    timeLabel: '17:00 - 19:20',
+    timeLabel: '17:00',
     location: '강남 CGV',
     status: 'REMINDER_ON',
     participants: [

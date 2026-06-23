@@ -2,21 +2,13 @@ import { useState, type ReactNode } from 'react';
 import {
   AtSign,
   BellRing,
-  CheckCircle2,
-  ChevronRight,
   Copy,
-  Database,
-  Globe2,
-  KeyRound,
-  LogIn,
   LogOut,
   PencilLine,
   Share2,
-  ShieldCheck,
   UserRound,
   X,
 } from 'lucide-react-native';
-import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Modal, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -26,35 +18,22 @@ import { mapProfileToHostProfile, updateAuthenticatedProfile } from '@/data/supa
 import { useNotificationSettings } from '@/hooks/useAppNotifications';
 import { usePromiseData } from '@/hooks/usePromiseData';
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
-import { getNotificationStatusCopy } from '@/lib/notificationStatus';
+import type { AppNotificationCategory } from '@/lib/appNotifications';
 import { resolveDisplayProfile } from '@/lib/profileDisplay';
 import {
   buildProfileShareMessage,
   getProfileHandleForClipboard,
 } from '@/lib/profileShare';
-import { isSupabaseConfigured } from '@/lib/supabase';
-import { getAuthRedirectUrl, signInWithSocialProvider, signOutFromSupabase } from '@/lib/supabaseAuth';
-import type { HostProfile } from '@/types/promise';
+import { signOutFromSupabase } from '@/lib/supabaseAuth';
+import type { HostProfile, ReminderLead } from '@/types/promise';
 
-type ProviderId = 'google' | 'kakao';
-
-const providerMeta: Record<ProviderId, { label: string; badge: string; backgroundColor: string; textColor: string }> = {
-  google: {
-    label: 'Google',
-    badge: 'G',
-    backgroundColor: palette.surface,
-    textColor: palette.ink,
-  },
-  kakao: {
-    label: '카카오톡',
-    badge: 'K',
-    backgroundColor: palette.kakao,
-    textColor: palette.ink,
-  },
-};
+const reminderLeadOptions: Array<{ value: ReminderLead; label: string }> = [
+  { value: '10_MIN', label: '10분 전' },
+  { value: '30_MIN', label: '30분 전' },
+  { value: '1_HOUR', label: '1시간 전' },
+];
 
 export default function ProfileScreen() {
-  const router = useRouter();
   const { profile } = usePromiseData();
   const { isAuthenticated, user } = useSupabaseAuth();
   const notificationSettings = useNotificationSettings();
@@ -70,35 +49,6 @@ export default function ProfileScreen() {
   const displayName = currentProfile?.displayName ?? user?.email ?? '내 프로필';
   const handle = currentProfile?.handle ?? 'handle';
   const avatarLabel = displayName.slice(0, 1);
-  const notificationStatus = getNotificationStatusCopy({
-    enabled: notificationSettings.enabled,
-    isAuthenticated,
-    permissionStatus: notificationSettings.permissionStatus,
-  });
-
-  async function handleProviderPress(provider: ProviderId) {
-    const providerLabel = providerMeta[provider].label;
-
-    if (!isSupabaseConfigured) {
-      setNotice(`${providerLabel} 로그인은 Supabase 프로젝트 URL과 publishable key 설정 후 연결할 수 있어요.`);
-      return;
-    }
-
-    setIsAuthWorking(true);
-
-    try {
-      const session = await signInWithSocialProvider(provider);
-      setNotice(
-        session
-          ? `${providerLabel} 로그인이 완료됐어요.`
-          : `${providerLabel} 로그인 창을 열었어요. 완료되지 않으면 Supabase Redirect URL에 ${getAuthRedirectUrl()}을 추가해 주세요.`,
-      );
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : `${providerLabel} 로그인을 완료하지 못했어요.`);
-    } finally {
-      setIsAuthWorking(false);
-    }
-  }
 
   async function handleSignOut() {
     setIsAuthWorking(true);
@@ -113,25 +63,9 @@ export default function ProfileScreen() {
     }
   }
 
-  async function handleNotificationToggle() {
-    if (notificationSettings.enabled) {
-      await notificationSettings.disable();
-      setNotice('폰 알림을 껐어요.');
-      return;
-    }
-
+  async function handleNotificationPermissionEnable() {
     const enabled = await notificationSettings.enable();
-    setNotice(
-      enabled
-        ? '폰 알림을 켰어요. 새 친구 요청, 친구 추가 완료, 새 약속 카드, 약속 리마인드가 알림으로 표시됩니다.'
-        : notificationSettings.error ?? '휴대폰 알림 권한이 필요해요.',
-    );
-  }
-
-  async function handleNotificationTest() {
-    const sent = await notificationSettings.sendTest();
-
-    setNotice(sent ? '테스트 알림을 보냈어요.' : '테스트 알림을 보내지 못했어요. 알림 권한과 설정을 확인해 주세요.');
+    setNotice(enabled ? '알림 권한을 켰어요.' : notificationSettings.error ?? '휴대폰 알림 권한이 필요해요.');
   }
 
   async function handleShareProfile() {
@@ -230,46 +164,9 @@ export default function ProfileScreen() {
           <View style={styles.headerCopy}>
             <Text style={styles.kicker}>내정보</Text>
             <Text style={styles.title}>{displayName}</Text>
-            <Text style={styles.subtitle}>로그인, 공개 프로필, 계정 데이터를 관리해요.</Text>
+            <Text style={styles.subtitle}>친구 아이디와 알림을 관리해요.</Text>
           </View>
         </View>
-
-        <Card style={styles.authCard}>
-          <View style={styles.authTopRow}>
-            <View style={styles.authIcon}>
-              <ShieldCheck size={22} color={palette.primaryDeep} />
-            </View>
-            <View style={styles.authCopy}>
-              <Text style={styles.cardKicker}>Supabase Auth</Text>
-              <Text style={styles.authTitle}>
-                {isAuthenticated ? '로그인됨' : isSupabaseConfigured ? '로그인 연결 준비됨' : '로그인 설정 대기'}
-              </Text>
-            </View>
-            <StatusPill
-              tone={isAuthenticated || isSupabaseConfigured ? 'ready' : 'pending'}
-              label={isAuthenticated ? '동기화' : isSupabaseConfigured ? '준비됨' : '설정 필요'}
-            />
-          </View>
-          <Text style={styles.authBody}>
-            {isAuthenticated
-              ? '카드와 일정이 Supabase 계정에 저장됩니다.'
-              : `Google 또는 카카오톡으로 로그인하면 프로필, 친구, 약속 카드가 계정에 묶입니다. Redirect: ${getAuthRedirectUrl()}`}
-          </Text>
-          {isAuthenticated ? (
-            <ActionButton label={isAuthWorking ? '처리 중' : '로그아웃'} variant="secondary" fullWidth onPress={() => void handleSignOut()} />
-          ) : (
-            <View style={styles.providerStack}>
-              <ActionButton
-                label="로그인 페이지 열기"
-                icon={<LogIn size={17} color={palette.onLight} />}
-                fullWidth
-                onPress={() => router.push('/login' as never)}
-              />
-              <ProviderButton provider="google" disabled={isAuthWorking} onPress={() => void handleProviderPress('google')} />
-              <ProviderButton provider="kakao" disabled={isAuthWorking} onPress={() => void handleProviderPress('kakao')} />
-            </View>
-          )}
-        </Card>
 
         <SectionHeader title="공개 프로필" action={`@${handle}`} />
         <Card style={styles.identityCard}>
@@ -303,69 +200,97 @@ export default function ProfileScreen() {
           />
         </Card>
 
-        <SectionHeader title="계정 데이터" action="동기화 대상" />
-        <View style={styles.syncGrid}>
-          <SyncTile icon={<UserRound size={18} color={palette.primaryDeep} />} title="프로필" body="이름, 아이디, 링크" />
-          <SyncTile icon={<Globe2 size={18} color={palette.primaryDeep} />} title="친구" body="친구 목록과 요청" />
-          <SyncTile icon={<Database size={18} color={palette.primaryDeep} />} title="카드" body="보낸 카드와 응답" />
-          <SyncTile icon={<BellRing size={18} color={palette.primaryDeep} />} title="알림" body="친구/카드/리마인드" />
-        </View>
-
-        <SectionHeader title="폰 알림" action={notificationSettings.enabled ? 'ON' : 'OFF'} />
-        <Card style={styles.notificationCard}>
-          <View style={styles.notificationIcon}>
-            <BellRing size={20} color={palette.primaryDeep} />
-          </View>
-          <View style={styles.notificationCopy}>
-            <View style={styles.notificationTitleRow}>
-              <Text style={styles.notificationTitle}>알림 설정</Text>
-              <View style={[styles.notificationStatusPill, styles[`${notificationStatus.tone}NotificationStatusPill`]]}>
-                <Text style={styles.notificationStatusText}>{notificationStatus.label}</Text>
+        <SectionHeader title="알림 설정" action={notificationSettings.enabled ? '권한 켜짐' : '권한 필요'} />
+        <Card style={styles.notificationSettingsCard}>
+          <View style={styles.notificationPermissionRow}>
+            <View style={styles.notificationPermissionTitleRow}>
+              <View style={styles.notificationIcon}>
+                <BellRing size={20} color={palette.primaryDeep} />
               </View>
+              <Text style={styles.notificationTitle}>알림 설정</Text>
             </View>
-            <Text style={styles.notificationBody}>
-              친구 요청과 친구 추가 완료, 받은 약속 카드, 약속 리마인드를 휴대폰 알림으로 받아요.
-            </Text>
-            <Text style={styles.notificationStatusBody}>{notificationStatus.body}</Text>
-            {notificationSettings.error ? <Text style={styles.notificationError}>{notificationSettings.error}</Text> : null}
-          </View>
-          <View style={styles.notificationActions}>
             <ActionButton
-              label={notificationSettings.isWorking ? '처리 중' : notificationSettings.enabled ? '끄기' : '켜기'}
+              label={notificationSettings.enabled ? '권한 켜짐' : '권한 켜기'}
               variant={notificationSettings.enabled ? 'secondary' : 'primary'}
+              disabled={notificationSettings.enabled || notificationSettings.isWorking}
+              onPress={() => void handleNotificationPermissionEnable()}
+            />
+          </View>
+          {notificationSettings.error ? <Text style={styles.notificationError}>{notificationSettings.error}</Text> : null}
+
+          <View style={styles.notificationToggleList}>
+            <NotificationToggleRow
+              category="friendRequests"
               disabled={notificationSettings.isWorking}
-              onPress={() => void handleNotificationToggle()}
+              enabled={notificationSettings.preferences.categories.friendRequests}
+              label="친구 요청"
+              onToggle={notificationSettings.setCategoryEnabled}
             />
-            <ActionButton
-              label="테스트"
-              variant="ghost"
-              disabled={!notificationSettings.enabled || notificationSettings.isWorking}
-              onPress={() => void handleNotificationTest()}
+            <NotificationToggleRow
+              category="friendAccepted"
+              disabled={notificationSettings.isWorking}
+              enabled={notificationSettings.preferences.categories.friendAccepted}
+              label="친구 수락"
+              onToggle={notificationSettings.setCategoryEnabled}
             />
+            <NotificationToggleRow
+              category="cardReceived"
+              disabled={notificationSettings.isWorking}
+              enabled={notificationSettings.preferences.categories.cardReceived}
+              label="받은 카드"
+              onToggle={notificationSettings.setCategoryEnabled}
+            />
+            <NotificationToggleRow
+              category="cardResponses"
+              disabled={notificationSettings.isWorking}
+              enabled={notificationSettings.preferences.categories.cardResponses}
+              label="응답 도착"
+              onToggle={notificationSettings.setCategoryEnabled}
+            />
+            <NotificationToggleRow
+              category="cardConfirmed"
+              disabled={notificationSettings.isWorking}
+              enabled={notificationSettings.preferences.categories.cardConfirmed}
+              label="약속 확정"
+              onToggle={notificationSettings.setCategoryEnabled}
+            />
+            <NotificationToggleRow
+              category="reminders"
+              disabled={notificationSettings.isWorking}
+              enabled={notificationSettings.preferences.categories.reminders}
+              label="약속 리마인드"
+              onToggle={notificationSettings.setCategoryEnabled}
+            />
+          </View>
+
+          <View style={styles.reminderLeadSection}>
+            <Text style={styles.reminderLeadTitle}>리마인드 시간</Text>
+            <View style={styles.reminderLeadRow}>
+              {reminderLeadOptions.map((option) => (
+                <ReminderLeadButton
+                  key={option.value}
+                  disabled={notificationSettings.isWorking}
+                  label={option.label}
+                  selected={notificationSettings.preferences.reminderLead === option.value}
+                  onPress={() => void notificationSettings.setReminderLead(option.value)}
+                />
+              ))}
+            </View>
           </View>
         </Card>
 
-        <SectionHeader title="로그인 설정" />
-        <View style={styles.settingStack}>
-          <SettingRow
-            icon={<KeyRound size={19} color={palette.primaryDeep} />}
-            title="세션 저장"
-            body="앱을 다시 열어도 로그인 상태 유지"
-            value="자동"
-          />
-          <SettingRow
-            icon={<ShieldCheck size={19} color={palette.primaryDeep} />}
-            title="데이터 보호"
-            body="사용자별 접근 권한으로 관리"
-            value="RLS"
-          />
-          <SettingRow
-            icon={<LogOut size={19} color={palette.primaryDeep} />}
-            title="로그아웃"
-            body="로그인 연결 후 사용 가능"
-            value="대기"
-          />
-        </View>
+        {isAuthenticated ? (
+          <View style={styles.logoutFooter}>
+            <ActionButton
+              label={isAuthWorking ? '처리 중' : '로그아웃'}
+              variant="danger"
+              icon={<LogOut size={17} color={palette.onLight} />}
+              disabled={isAuthWorking}
+              fullWidth
+              onPress={() => void handleSignOut()}
+            />
+          </View>
+        ) : null}
       </AppScreen>
 
       <ProfileEditModal
@@ -396,40 +321,6 @@ export default function ProfileScreen() {
   );
 }
 
-function StatusPill({ label, tone }: { label: string; tone: 'ready' | 'pending' }) {
-  return (
-    <View style={[styles.statusPill, tone === 'ready' ? styles.readyPill : styles.pendingPill]}>
-      <Text style={styles.statusPillText}>{label}</Text>
-    </View>
-  );
-}
-
-function ProviderButton({ disabled, provider, onPress }: { disabled?: boolean; provider: ProviderId; onPress: () => void }) {
-  const meta = providerMeta[provider];
-
-  return (
-    <Pressable
-      accessibilityLabel={`${meta.label} 로그인`}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.providerButton,
-        { backgroundColor: meta.backgroundColor },
-        provider === 'kakao' && styles.kakaoProviderButton,
-        disabled && styles.disabledProviderButton,
-        pressed && styles.pressed,
-      ]}>
-      <View style={[styles.providerBadge, provider === 'kakao' && styles.kakaoProviderBadge]}>
-        <Text style={[styles.providerBadgeText, provider === 'kakao' && styles.kakaoProviderBadgeText]}>{meta.badge}</Text>
-      </View>
-      <Text style={[styles.providerText, { color: meta.textColor }]}>{meta.label}로 계속</Text>
-      <ChevronRight size={18} color={meta.textColor} />
-    </Pressable>
-  );
-}
-
 function ProfileLine({ action, icon, label, value }: { action?: ReactNode; icon: ReactNode; label: string; value: string }) {
   return (
     <View style={styles.profileLine}>
@@ -445,38 +336,68 @@ function ProfileLine({ action, icon, label, value }: { action?: ReactNode; icon:
   );
 }
 
-function SyncTile({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
+function NotificationToggleRow({
+  category,
+  disabled,
+  enabled,
+  label,
+  onToggle,
+}: {
+  category: AppNotificationCategory;
+  disabled?: boolean;
+  enabled: boolean;
+  label: string;
+  onToggle: (category: AppNotificationCategory, enabled: boolean) => void;
+}) {
   return (
-    <Card style={styles.syncTile}>
-      <View style={styles.syncIcon}>{icon}</View>
-      <Text style={styles.syncTitle}>{title}</Text>
-      <Text style={styles.syncBody}>{body}</Text>
-    </Card>
+    <View style={styles.notificationToggleRow}>
+      <Text style={styles.notificationToggleText}>{label}</Text>
+      <Pressable
+        accessibilityLabel={`${label} 알림 ${enabled ? '끄기' : '켜기'}`}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: enabled, disabled }}
+        disabled={disabled}
+        onPress={() => onToggle(category, !enabled)}
+        style={({ pressed }) => [
+          styles.notificationToggleButton,
+          enabled ? styles.notificationToggleButtonOn : styles.notificationToggleButtonOff,
+          disabled && styles.disabledToggleButton,
+          pressed && !disabled && styles.pressed,
+        ]}>
+        <Text style={[styles.notificationToggleButtonText, enabled && styles.notificationToggleButtonTextOn]}>
+          {enabled ? 'ON' : 'OFF'}
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 
-function SettingRow({
-  icon,
-  title,
-  body,
-  value,
+function ReminderLeadButton({
+  disabled,
+  label,
+  selected,
+  onPress,
 }: {
-  icon: ReactNode;
-  title: string;
-  body: string;
-  value: string;
+  disabled?: boolean;
+  label: string;
+  selected: boolean;
+  onPress: () => void;
 }) {
   return (
-    <Card style={styles.settingCard}>
-      <View style={styles.settingIcon}>{icon}</View>
-      <View style={styles.settingCopy}>
-        <Text style={styles.settingTitle}>{title}</Text>
-        <Text style={styles.settingBody}>{body}</Text>
-      </View>
-      <View style={styles.settingValuePill}>
-        <Text style={styles.settingValue}>{value}</Text>
-      </View>
-    </Card>
+    <Pressable
+      accessibilityLabel={`${label} 리마인드`}
+      accessibilityRole="button"
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.reminderLeadButton,
+        selected && styles.selectedReminderLeadButton,
+        disabled && styles.disabledToggleButton,
+        pressed && !disabled && styles.pressed,
+      ]}>
+      <Text style={[styles.reminderLeadButtonText, selected && styles.selectedReminderLeadButtonText]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -798,10 +719,10 @@ const styles = StyleSheet.create({
     minHeight: 52,
     paddingHorizontal: spacing.md,
   },
-  kakaoProviderButton: {
+  kakaoProviderTone: {
     borderColor: '#B89E00',
   },
-  disabledProviderButton: {
+  disabledProviderTone: {
     opacity: 0.55,
   },
   providerBadge: {
@@ -925,6 +846,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  notificationSettingsCard: {
+    gap: spacing.md,
+  },
+  notificationPermissionRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+  },
+  notificationPermissionTitleRow: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minWidth: 0,
+  },
   notificationIcon: {
     alignItems: 'center',
     backgroundColor: palette.limeSoft,
@@ -999,6 +936,96 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     lineHeight: 17,
+  },
+  notificationToggleList: {
+    borderColor: palette.line,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+  },
+  notificationToggleRow: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderBottomColor: palette.line,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 54,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  notificationToggleText: {
+    color: palette.ink,
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  notificationToggleButton: {
+    alignItems: 'center',
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    height: 34,
+    justifyContent: 'center',
+    minWidth: 64,
+    paddingHorizontal: spacing.sm,
+  },
+  notificationToggleButtonOn: {
+    backgroundColor: palette.primary,
+  },
+  notificationToggleButtonOff: {
+    backgroundColor: palette.surface,
+  },
+  disabledToggleButton: {
+    opacity: 0.55,
+  },
+  notificationToggleButtonText: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  notificationToggleButtonTextOn: {
+    color: palette.onLight,
+  },
+  reminderLeadSection: {
+    gap: spacing.sm,
+  },
+  reminderLeadTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  reminderLeadRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  reminderLeadButton: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    flexGrow: 1,
+    justifyContent: 'center',
+    minHeight: 42,
+    minWidth: 96,
+    paddingHorizontal: spacing.md,
+  },
+  selectedReminderLeadButton: {
+    backgroundColor: palette.amberSoft,
+  },
+  reminderLeadButtonText: {
+    color: palette.inkMuted,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  selectedReminderLeadButtonText: {
+    color: palette.primaryDeep,
+  },
+  logoutFooter: {
+    paddingBottom: spacing.md,
+    paddingTop: spacing.xl,
   },
   settingCard: {
     alignItems: 'center',

@@ -6,23 +6,30 @@ import { getActiveScheduleRepository } from '@/data/scheduleRepository';
 import {
   checkSocialNotifications,
   configureAppNotifications,
+  DEFAULT_APP_NOTIFICATION_PREFERENCES,
   disableAppNotifications,
   enableAppNotifications,
+  ensureAppNotificationEnabledForGrantedPermission,
+  getAppNotificationPreferencesSnapshot,
   getAppNotificationPermissionStatus,
   getAppNotificationSettingsSnapshot,
   installSocialNotificationRealtimeRefresh,
   installNotificationResponseHandler,
-  isAppNotificationEnabled,
   scheduleAppointmentReminders,
   seedCurrentSocialNotificationState,
   sendTestAppNotification,
+  setAppNotificationCategoryEnabled,
+  setAppNotificationReminderLead,
   syncPushTokenRegistration,
+  type AppNotificationCategory,
+  type AppNotificationPreferences,
 } from '@/lib/appNotifications';
 import type { AppNotificationPermissionStatus } from '@/lib/notificationStatus';
+import type { ReminderLead } from '@/types/promise';
 import { supabase } from '@/lib/supabase';
 
 async function refreshEnabledNotifications() {
-  if (!(await isAppNotificationEnabled())) {
+  if (!(await ensureAppNotificationEnabledForGrantedPermission())) {
     return;
   }
 
@@ -41,6 +48,15 @@ async function refreshEnabledNotifications() {
   ]);
 }
 
+async function refreshSocialNotificationsImmediately() {
+  if (!(await ensureAppNotificationEnabledForGrantedPermission())) {
+    return;
+  }
+
+  await checkSocialNotifications();
+  void refreshEnabledNotifications();
+}
+
 export function useAppNotificationRuntime() {
   useEffect(() => {
     void configureAppNotifications();
@@ -57,14 +73,29 @@ export function useAppNotificationRuntime() {
     void refreshEnabledNotifications();
     let isSubscribed = true;
     let removeRealtimeRefresh: (() => void) | null = null;
-    void installSocialNotificationRealtimeRefresh(refreshEnabledNotifications).then((remove) => {
+    let realtimeRefreshInstallId = 0;
+
+    async function reinstallRealtimeRefresh() {
+      const installId = realtimeRefreshInstallId + 1;
+      realtimeRefreshInstallId = installId;
+      removeRealtimeRefresh?.();
+      removeRealtimeRefresh = null;
+      const remove = await installSocialNotificationRealtimeRefresh(refreshSocialNotificationsImmediately);
+
       if (!isSubscribed) {
         remove();
         return;
       }
 
+      if (installId !== realtimeRefreshInstallId) {
+        remove();
+        return;
+      }
+
       removeRealtimeRefresh = remove;
-    });
+    }
+
+    void reinstallRealtimeRefresh();
     const appStateSubscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void refreshEnabledNotifications();
@@ -72,6 +103,7 @@ export function useAppNotificationRuntime() {
     });
     const authSubscription = supabase?.auth.onAuthStateChange(() => {
       void refreshEnabledNotifications();
+      void reinstallRealtimeRefresh();
     });
     const intervalId = setInterval(() => {
       void refreshEnabledNotifications();
@@ -91,13 +123,19 @@ export function useNotificationSettings() {
   const [enabled, setEnabled] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<AppNotificationPermissionStatus>('unknown');
+  const [preferences, setPreferences] = useState<AppNotificationPreferences>(DEFAULT_APP_NOTIFICATION_PREFERENCES);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    const { enabled: nextEnabled, permissionStatus: nextPermissionStatus } = await getAppNotificationSettingsSnapshot();
+    const {
+      enabled: nextEnabled,
+      permissionStatus: nextPermissionStatus,
+      preferences: nextPreferences,
+    } = await getAppNotificationSettingsSnapshot();
 
     setEnabled(nextEnabled);
     setPermissionStatus(nextPermissionStatus);
+    setPreferences(nextPreferences);
   }, []);
 
   useEffect(() => {
@@ -122,6 +160,7 @@ export function useNotificationSettings() {
       await refreshEnabledNotifications();
       setEnabled(true);
       setPermissionStatus(await getAppNotificationPermissionStatus());
+      setPreferences(await getAppNotificationPreferencesSnapshot());
       return true;
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '알림을 켜지 못했어요.');
@@ -141,14 +180,53 @@ export function useNotificationSettings() {
       await disableAppNotifications();
       setEnabled(false);
       setPermissionStatus(await getAppNotificationPermissionStatus());
+      setPreferences(await getAppNotificationPreferencesSnapshot());
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '알림을 끄지 못했어요.');
       const { enabled: nextEnabled, permissionStatus: nextPermissionStatus } = await getAppNotificationSettingsSnapshot();
 
       setEnabled(nextEnabled);
       setPermissionStatus(nextPermissionStatus);
+      setPreferences(await getAppNotificationPreferencesSnapshot());
     } finally {
       setIsWorking(false);
+    }
+  }, []);
+
+  const setCategoryEnabled = useCallback(async (category: AppNotificationCategory, nextEnabled: boolean) => {
+    setError(null);
+    setPreferences((currentPreferences) => ({
+      ...currentPreferences,
+      categories: {
+        ...currentPreferences.categories,
+        [category]: nextEnabled,
+      },
+    }));
+
+    try {
+      const savedPreferences = await setAppNotificationCategoryEnabled(category, nextEnabled);
+      setPreferences(savedPreferences);
+      void refreshEnabledNotifications();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '알림 설정을 저장하지 못했어요.');
+      setPreferences(await getAppNotificationPreferencesSnapshot());
+    }
+  }, []);
+
+  const setReminderLead = useCallback(async (reminderLead: ReminderLead) => {
+    setError(null);
+    setPreferences((currentPreferences) => ({
+      ...currentPreferences,
+      reminderLead,
+    }));
+
+    try {
+      const savedPreferences = await setAppNotificationReminderLead(reminderLead);
+      setPreferences(savedPreferences);
+      void refreshEnabledNotifications();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '리마인드 시간을 저장하지 못했어요.');
+      setPreferences(await getAppNotificationPreferencesSnapshot());
     }
   }, []);
 
@@ -171,10 +249,13 @@ export function useNotificationSettings() {
     enabled,
     isWorking,
     permissionStatus,
+    preferences,
     error,
     reload,
     enable,
     disable,
+    setCategoryEnabled,
+    setReminderLead,
     sendTest,
   };
 }

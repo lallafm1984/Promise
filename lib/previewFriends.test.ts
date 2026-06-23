@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { getPreviewFriendOptions, getPreviewRecipientProfileIds, selectOnePreviewFriend } from './previewFriends';
+import {
+  getPreviewFriendOptions,
+  getPreviewRecipientProfileIds,
+  togglePreviewFriendSelection,
+} from './previewFriends';
 import type { AppFriend } from './friends';
 
 const realFriend: AppFriend = {
@@ -12,19 +16,27 @@ const realFriend: AppFriend = {
   color: '#BFE8FF',
   lastActiveLabel: 'now',
 };
+const otherFriend: AppFriend = {
+  id: 'friend-other',
+  profileId: 'profile-other',
+  displayName: 'Other Friend',
+  handle: 'other',
+  avatarLabel: 'O',
+  color: '#FFE0B8',
+  lastActiveLabel: 'now',
+};
 
 describe('preview friend test options', () => {
-  it('provides selectable test friends when the account has no app friends', () => {
+  it('does not provide fake recipient options when the account has no app friends', () => {
     const result = getPreviewFriendOptions([]);
 
-    expect(result.isUsingTestFriends).toBe(true);
-    expect(result.options).toHaveLength(12);
-    expect(result.options[0].id).toMatch(/^test-friend-/);
+    expect(result.isUsingTestFriends).toBe(false);
+    expect(result.options).toEqual([]);
   });
 
   it('does not send fake recipient profile ids for test friends', () => {
     const result = getPreviewFriendOptions([]);
-    const recipientIds = getPreviewRecipientProfileIds([], [result.options[0].id]);
+    const recipientIds = getPreviewRecipientProfileIds([], ['test-friend-jiu']);
 
     expect(recipientIds).toEqual([]);
   });
@@ -35,9 +47,23 @@ describe('preview friend test options', () => {
     expect(recipientIds).toEqual(['profile-real']);
   });
 
-  it('keeps only one selected friend at a time', () => {
-    expect(selectOnePreviewFriend([], 'friend-a')).toEqual(['friend-a']);
-    expect(selectOnePreviewFriend(['friend-a'], 'friend-b')).toEqual(['friend-b']);
-    expect(selectOnePreviewFriend(['friend-b'], 'friend-b')).toEqual([]);
+  it('keeps multiple real recipient profile ids in selection order', () => {
+    const recipientIds = getPreviewRecipientProfileIds(
+      [realFriend, otherFriend],
+      [otherFriend.id, realFriend.id],
+    );
+
+    expect(recipientIds).toEqual(['profile-other', 'profile-real']);
+  });
+
+  it('toggles multiple selected friends without replacing existing selections', () => {
+    expect(togglePreviewFriendSelection([], 'friend-a')).toEqual(['friend-a']);
+    expect(togglePreviewFriendSelection(['friend-a'], 'friend-b')).toEqual(['friend-a', 'friend-b']);
+    expect(togglePreviewFriendSelection(['friend-a', 'friend-b'], 'friend-a')).toEqual(['friend-b']);
+  });
+
+  it('does not expand preview-only QA rows', () => {
+    expect(getPreviewFriendOptions([realFriend]).options).toEqual([realFriend]);
+    expect(getPreviewRecipientProfileIds([realFriend], ['qa-preview-friend-2'])).toEqual([]);
   });
 });

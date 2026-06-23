@@ -182,6 +182,8 @@ export function usePromiseData() {
   useEffect(() => {
     isMountedRef.current = true;
     let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    let dataChangeChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
+    let dataChangeInstallId = 0;
 
     function scheduleLoad(options: { force?: boolean } = {}) {
       if (reloadTimer) {
@@ -193,13 +195,59 @@ export function usePromiseData() {
       }, PROMISE_DATA_RELOAD_DEBOUNCE_MS);
     }
 
+    function uninstallDataChangeChannel() {
+      dataChangeInstallId += 1;
+
+      if (dataChangeChannel) {
+        void dataChangeChannel.unsubscribe();
+        dataChangeChannel = null;
+      }
+    }
+
+    async function installDataChangeChannel() {
+      const installId = dataChangeInstallId + 1;
+      dataChangeInstallId = installId;
+
+      if (dataChangeChannel) {
+        void dataChangeChannel.unsubscribe();
+        dataChangeChannel = null;
+      }
+
+      if (!supabase) {
+        return;
+      }
+
+      const accountId = (await supabase.auth.getSession()).data.session?.user.id;
+
+      if (!accountId || !isMountedRef.current || installId !== dataChangeInstallId) {
+        return;
+      }
+
+      dataChangeChannel = supabase
+        .channel(createPromiseDataRefreshChannelName())
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'mobile_sync_versions',
+            filter: `user_id=eq.${accountId}`,
+          },
+          () => {
+            scheduleLoad({ force: true });
+          },
+        )
+        .subscribe();
+    }
+
     void (async () => {
       await hydrateCache();
       await load({ force: lastSnapshotKeyRef.current === null });
+      await installDataChangeChannel();
     })();
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
       if (shouldReloadPromiseDataForAppState(nextState)) {
-        scheduleLoad();
+        scheduleLoad({ force: true });
       }
     });
     const {
@@ -210,32 +258,16 @@ export function usePromiseData() {
           activeCacheKeyRef.current = null;
           resetLoadedDataRefs();
           setState(initialState);
+          uninstallDataChangeChannel();
           return;
         }
 
         void (async () => {
           await hydrateCache();
           await load({ force: true });
+          await installDataChangeChannel();
         })();
       }) ?? { data: { subscription: null } };
-    const dataChangeChannel = supabase
-      ?.channel(createPromiseDataRefreshChannelName())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointment_cards' }, () =>
-        scheduleLoad({ force: true }),
-      )
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointment_respondents' }, () =>
-        scheduleLoad({ force: true }),
-      )
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointment_candidate_responses' }, () =>
-        scheduleLoad({ force: true }),
-      )
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'card_recipients' }, () =>
-        scheduleLoad({ force: true }),
-      )
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () =>
-        scheduleLoad({ force: true }),
-      )
-      .subscribe();
 
     return () => {
       isMountedRef.current = false;
@@ -244,7 +276,7 @@ export function usePromiseData() {
       }
       appStateSubscription.remove();
       subscription?.unsubscribe();
-      void dataChangeChannel?.unsubscribe();
+      uninstallDataChangeChannel();
     };
   }, [hydrateCache, load, resetLoadedDataRefs]);
 

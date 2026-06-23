@@ -118,6 +118,48 @@ describe('managed card local state', () => {
     expect(managedCards).toEqual([localNoReplyCard]);
   });
 
+  it('uses the refreshed confirmed status for a received card after the sender confirms it', () => {
+    const localRepliedCard = {
+      ...buildCard('received-card', 'PENDING'),
+      requesterName: 'sender',
+      candidates: [
+        {
+          id: 'slot-1',
+          startsAt: '2026-06-20T10:00:00.000Z',
+          endsAt: '2026-06-20T11:00:00.000Z',
+          label: '6??20??19:00',
+          shortLabel: '6/20',
+          summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 },
+        },
+      ],
+      participants: [
+        {
+          id: 'profile-jiu',
+          name: '지',
+          displayName: '지우',
+          color: '#DDEBFF',
+          choice: 'YES' as const,
+          responses: [{ candidateId: 'slot-1', choice: 'YES' as const }],
+        },
+      ],
+    };
+    const remoteConfirmedCard = {
+      ...localRepliedCard,
+      status: 'CONFIRMED' as const,
+      selectedSlotId: 'slot-1',
+      participants: [],
+    };
+
+    const managedCards = mergeManagedCardsView([localRepliedCard], [remoteConfirmedCard], []);
+
+    expect(managedCards[0]).toMatchObject({
+      id: 'received-card',
+      status: 'CONFIRMED',
+      selectedSlotId: 'slot-1',
+    });
+    expect(managedCards[0].participants).toEqual(localRepliedCard.participants);
+  });
+
   it('uses the refreshed server card when received card candidates changed after an edit', () => {
     const localNoReplyCard = {
       ...buildCard('received-card', 'PENDING'),

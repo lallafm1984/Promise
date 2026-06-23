@@ -21,8 +21,12 @@ const setNotificationHandler = vi.fn();
 const getPermissionsAsync = vi.fn();
 const getActiveFriendRepository = vi.fn();
 const getActivePromiseRepository = vi.fn();
+const getHostProfile = vi.fn();
+const listRecentCards = vi.fn();
 const listFriendState = vi.fn();
 const listReceivedCardAlerts = vi.fn();
+const buildCardConfirmedNotification = vi.fn();
+const buildCardResponseReceivedNotification = vi.fn();
 const buildCardReceivedNotification = vi.fn();
 const buildFriendAcceptedNotification = vi.fn();
 const buildFriendRequestNotification = vi.fn();
@@ -34,6 +38,8 @@ const notificationEnabledKey = 'whenbollae:notifications:enabled:profile-minseo'
 const seenFriendRequestIdsKey = 'whenbollae:notifications:seen-friend-request-ids:profile-minseo';
 const seenFriendIdsKey = 'whenbollae:notifications:seen-friend-ids:profile-minseo';
 const seenCardIdsKey = 'whenbollae:notifications:seen-card-ids:profile-minseo';
+const seenCardResponseFingerprintsKey = 'whenbollae:notifications:seen-card-response-fingerprints:profile-minseo';
+const seenCardConfirmationFingerprintsKey = 'whenbollae:notifications:seen-card-confirmation-fingerprints:profile-minseo';
 const reminderIdsKey = 'whenbollae:notifications:reminder-ids:profile-minseo';
 const expoPushTokenKey = 'whenbollae:notifications:expo-push-token';
 
@@ -101,6 +107,8 @@ vi.mock('@/data/promiseRepository', () => ({
 }));
 
 vi.mock('@/lib/notifications', () => ({
+  buildCardConfirmedNotification,
+  buildCardResponseReceivedNotification,
   buildCardReceivedNotification,
   buildFriendAcceptedNotification,
   buildFriendRequestNotification,
@@ -185,10 +193,36 @@ describe('app notification registration', () => {
     setNotificationChannelAsync.mockClear();
     setNotificationHandler.mockClear();
     mockPlatform.OS = 'android';
+    getHostProfile.mockReset().mockResolvedValue({
+      id: 'profile-minseo',
+      displayName: '민서',
+      handle: 'minseo',
+      profileUrl: 'whenbollae.app/@minseo',
+      timezone: 'Asia/Seoul',
+      availabilitySummary: [],
+      reminderLead: '30_MIN',
+    });
+    listRecentCards.mockReset().mockResolvedValue([]);
     listFriendState.mockReset().mockResolvedValue({ friends: [], requests: [], suggestions: [] });
     listReceivedCardAlerts.mockReset().mockResolvedValue([]);
     getActiveFriendRepository.mockReset().mockResolvedValue({ repository: { listFriendState } });
-    getActivePromiseRepository.mockReset().mockResolvedValue({ repository: { listReceivedCardAlerts } });
+    getActivePromiseRepository.mockReset().mockResolvedValue({
+      repository: {
+        getHostProfile,
+        listRecentCards,
+        listReceivedCardAlerts,
+      },
+    });
+    buildCardConfirmedNotification.mockReset().mockImplementation((card) => ({
+      title: '약속이 확정되었습니다',
+      body: `${card.requesterName ?? card.hostName}님이 약속을 확정하였습니다. 일정에 추가됩니다.`,
+      data: { url: '/schedule?date=2026-06-25', type: 'card_confirmed', id: card.id },
+    }));
+    buildCardResponseReceivedNotification.mockReset().mockImplementation((card) => ({
+      title: '응답이 도착했어요',
+      body: `${card.location} 카드에 새 응답이 있어요.`,
+      data: { url: '/manage?tab=SENT_HAS_RESPONSE', type: 'card_response_received', id: card.id },
+    }));
     buildCardReceivedNotification.mockReset().mockImplementation((card) => ({
       title: '새 약속 카드',
       body: `${card.requesterName}님이 카드를 보냈어요.`,
@@ -229,7 +263,41 @@ describe('app notification registration', () => {
     );
   });
 
+  it('does not present disabled notification categories', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    const { presentAppNotification, setAppNotificationCategoryEnabled } = await import('./appNotifications');
+
+    await setAppNotificationCategoryEnabled('cardReceived', false);
+    await presentAppNotification({
+      title: '친구가 카드를 보냈어요',
+      body: '민서님이 카드를 보냈어요.',
+      data: { url: '/manage', type: 'card_received', id: 'card-disabled' },
+    });
+
+    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
+  });
+
+  it('uses the stored reminder lead time when scheduling appointment reminders', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    const { scheduleAppointmentReminders, setAppNotificationReminderLead } = await import('./appNotifications');
+    const profile = {
+      id: 'profile-minseo',
+      displayName: '민서',
+      handle: 'minseo',
+      profileUrl: 'whenbollae.app/@minseo',
+      timezone: 'Asia/Seoul',
+      availabilitySummary: [],
+      reminderLead: '30_MIN' as const,
+    };
+
+    await setAppNotificationReminderLead('10_MIN');
+    await scheduleAppointmentReminders(profile, []);
+
+    expect(buildReminderSchedulePlan).toHaveBeenCalledWith('10_MIN', [], {});
+  });
+
   it('does not register a push token when the app notification setting is off', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'false');
     const { syncPushTokenRegistration } = await import('./appNotifications');
 
     await expect(syncPushTokenRegistration()).resolves.toBeNull();
@@ -237,6 +305,24 @@ describe('app notification registration', () => {
     expect(getExpoPushTokenAsync).not.toHaveBeenCalled();
     expect(upsertNotificationToken).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('registers a push token when phone permission is already granted and the account setting is missing', async () => {
+    const { syncPushTokenRegistration } = await import('./appNotifications');
+
+    await expect(syncPushTokenRegistration()).resolves.toBe('ExponentPushToken[test-token]');
+
+    expect(asyncStorageValues.get(notificationEnabledKey)).toBe('true');
+    expect(getExpoPushTokenAsync).toHaveBeenCalledWith({ projectId: 'project-test' });
+    expect(upsertNotificationToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'profile-minseo',
+        provider: 'expo',
+        token: 'ExponentPushToken[test-token]',
+        device_label: expect.stringContaining('android'),
+      }),
+      { onConflict: 'provider,token' },
+    );
   });
 
   it('does not read another account notification setting as the current account setting', async () => {
@@ -278,6 +364,21 @@ describe('app notification registration', () => {
     expect(rpc.mock.invocationCallOrder[0]).toBeLessThan(upsertNotificationToken.mock.invocationCallOrder[0]);
   });
 
+  it('warns when Expo push token registration fails', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    getExpoPushTokenAsync.mockRejectedValueOnce(new Error('Missing FCM configuration'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { syncPushTokenRegistration } = await import('./appNotifications');
+
+    await expect(syncPushTokenRegistration()).resolves.toBeNull();
+
+    expect(warn).toHaveBeenCalledWith('Expo push token registration failed', expect.any(Error));
+    expect(rpc).not.toHaveBeenCalled();
+    expect(upsertNotificationToken).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
   it('sends a test phone notification when the app notification setting is on', async () => {
     asyncStorageValues.set(notificationEnabledKey, 'true');
     const { sendTestAppNotification } = await import('./appNotifications');
@@ -298,6 +399,7 @@ describe('app notification registration', () => {
   });
 
   it('does not send a test phone notification when the app notification setting is off', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'false');
     const { sendTestAppNotification } = await import('./appNotifications');
 
     await sendTestAppNotification();
@@ -317,40 +419,21 @@ describe('app notification registration', () => {
     expect(removeNotificationResponseReceivedListener).not.toHaveBeenCalled();
   });
 
-  it('refreshes social notifications immediately when the current account receives social database changes', async () => {
+  it('refreshes social notifications from the current account mobile sync version only', async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const { installSocialNotificationRealtimeRefresh } = await import('./appNotifications');
 
     const cleanup = await installSocialNotificationRealtimeRefresh(refresh);
 
     expect(channel).toHaveBeenCalledWith(expect.stringMatching(/^whenbollae-social-notifications-profile-minseo-/));
+    expect(channelOn).toHaveBeenCalledTimes(1);
     expect(channelOn).toHaveBeenCalledWith(
       'postgres_changes',
       {
-        event: 'INSERT',
+        event: '*',
         schema: 'public',
-        table: 'card_recipients',
-        filter: 'recipient_profile_id=eq.profile-minseo',
-      },
-      expect.any(Function),
-    );
-    expect(channelOn).toHaveBeenCalledWith(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'friend_requests',
-        filter: 'addressee_id=eq.profile-minseo',
-      },
-      expect.any(Function),
-    );
-    expect(channelOn).toHaveBeenCalledWith(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'friend_requests',
-        filter: 'requester_id=eq.profile-minseo',
+        table: 'mobile_sync_versions',
+        filter: 'user_id=eq.profile-minseo',
       },
       expect.any(Function),
     );
@@ -362,10 +445,30 @@ describe('app notification registration', () => {
     }
     await Promise.resolve();
 
-    expect(refresh).toHaveBeenCalledTimes(3);
+    expect(refresh).toHaveBeenCalledTimes(1);
 
     cleanup();
     expect(channelUnsubscribe).toHaveBeenCalled();
+  });
+
+  it('refreshes once realtime subscription is confirmed and warns when realtime cannot subscribe', async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { installSocialNotificationRealtimeRefresh } = await import('./appNotifications');
+
+    await installSocialNotificationRealtimeRefresh(refresh);
+
+    const subscribeHandler = channelSubscribe.mock.calls[0]?.[0] as ((status: string) => void) | undefined;
+    expect(subscribeHandler).toEqual(expect.any(Function));
+
+    subscribeHandler?.('SUBSCRIBED');
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    subscribeHandler?.('CHANNEL_ERROR');
+    expect(warn).toHaveBeenCalledWith('Social notification realtime subscription failed', 'CHANNEL_ERROR');
+
+    warn.mockRestore();
   });
 
   it('shows phone notifications for new friend requests, accepted friends, and received cards', async () => {
@@ -443,6 +546,252 @@ describe('app notification registration', () => {
     expect(asyncStorageValues.get(seenFriendRequestIdsKey)).toBe('["request-harin"]');
     expect(asyncStorageValues.get(seenFriendIdsKey)).toBe('["friend-jiu"]');
     expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-seongsu"]');
+  });
+
+  it('does not drop the first received card notification when seen card storage is missing', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    listReceivedCardAlerts.mockResolvedValueOnce([
+      {
+        id: 'card-first',
+        title: 'First card',
+        location: 'Seongsu',
+        requesterName: 'Minseo',
+        createdAt: '2026-06-16T13:00:00+09:00',
+      },
+    ]);
+    const { checkSocialNotifications } = await import('./appNotifications');
+
+    await checkSocialNotifications();
+
+    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({
+          data: { url: '/manage', type: 'card_received', id: 'card-first' },
+        }),
+        trigger: { channelId: 'whenbollae-default' },
+      }),
+    );
+    expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-first"]');
+  });
+
+  it('does not duplicate a received card notification when realtime refreshes overlap', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(seenFriendRequestIdsKey, '[]');
+    asyncStorageValues.set(seenFriendIdsKey, '[]');
+    asyncStorageValues.set(seenCardIdsKey, '[]');
+    asyncStorageValues.set(seenCardResponseFingerprintsKey, '[]');
+    listReceivedCardAlerts.mockImplementation(() =>
+      new Promise((resolve) => {
+        setTimeout(
+          () =>
+            resolve([
+              {
+                id: 'card-overlap',
+                title: 'Overlap card',
+                location: 'Seongsu',
+                requesterName: 'Minseo',
+                createdAt: '2026-06-16T13:00:00+09:00',
+              },
+            ]),
+          0,
+        );
+      }),
+    );
+    const { checkSocialNotifications } = await import('./appNotifications');
+
+    await Promise.all([
+      checkSocialNotifications(),
+      checkSocialNotifications(),
+      checkSocialNotifications(),
+    ]);
+
+    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({
+          data: { url: '/manage', type: 'card_received', id: 'card-overlap' },
+        }),
+        trigger: { channelId: 'whenbollae-default' },
+      }),
+    );
+    expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-overlap"]');
+  });
+
+  it('shows a phone notification when a sent card receives a new response', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(seenFriendRequestIdsKey, '[]');
+    asyncStorageValues.set(seenFriendIdsKey, '[]');
+    asyncStorageValues.set(seenCardIdsKey, '[]');
+    asyncStorageValues.set(seenCardResponseFingerprintsKey, '[]');
+    listRecentCards.mockResolvedValueOnce([
+      {
+        id: 'card-gangnam',
+        mode: 'DIRECT',
+        status: 'PENDING',
+        title: 'Gangnam dinner',
+        hostName: 'Minseo',
+        location: 'Gangnam',
+        message: '',
+        sharedUrl: 'https://whenbollae.app/c/card-gangnam',
+        createdAt: '2026-06-16T13:00:00+09:00',
+        candidates: [
+          {
+            id: 'slot-1',
+            startsAt: '2026-06-25T10:00:00.000Z',
+            endsAt: '2026-06-25T11:00:00.000Z',
+            label: 'Jun 25',
+            shortLabel: 'Jun 25',
+            summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 },
+          },
+        ],
+        participants: [
+          {
+            id: 'profile-jiu',
+            name: 'Jiu',
+            displayName: 'Jiu',
+            color: '#DDEBFF',
+            choice: 'YES',
+            responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+          },
+        ],
+      },
+    ]);
+    const { checkSocialNotifications } = await import('./appNotifications');
+
+    await checkSocialNotifications();
+
+    expect(buildCardResponseReceivedNotification).toHaveBeenCalledWith(expect.objectContaining({ id: 'card-gangnam' }));
+    expect(scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({
+          title: '응답이 도착했어요',
+          data: { url: '/manage?tab=SENT_HAS_RESPONSE', type: 'card_response_received', id: 'card-gangnam' },
+        }),
+        trigger: { channelId: 'whenbollae-default' },
+      }),
+    );
+    expect(JSON.parse(asyncStorageValues.get(seenCardResponseFingerprintsKey) ?? '[]')).toEqual([
+      'card-gangnam:profile-jiu:YES:Jiu::slot-1:YES',
+    ]);
+  });
+
+  it('shows a schedule notification when a received replied card is confirmed', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(seenFriendRequestIdsKey, '[]');
+    asyncStorageValues.set(seenFriendIdsKey, '[]');
+    asyncStorageValues.set(seenCardIdsKey, '[]');
+    asyncStorageValues.set(seenCardResponseFingerprintsKey, '[]');
+    asyncStorageValues.set(seenCardConfirmationFingerprintsKey, '[]');
+    listRecentCards.mockResolvedValueOnce([
+      {
+        id: 'card-confirmed',
+        mode: 'DIRECT',
+        status: 'CONFIRMED',
+        title: 'Gangnam dinner',
+        hostName: 'Minseo',
+        requesterName: '민서',
+        location: 'Gangnam',
+        message: '',
+        sharedUrl: 'https://whenbollae.app/c/card-confirmed',
+        createdAt: '2026-06-16T13:00:00+09:00',
+        selectedSlotId: 'slot-1',
+        candidates: [
+          {
+            id: 'slot-1',
+            startsAt: '2026-06-25T19:00:00',
+            endsAt: '2026-06-25T20:00:00',
+            label: 'Jun 25',
+            shortLabel: 'Jun 25',
+            summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 },
+          },
+        ],
+        participants: [
+          {
+            id: 'profile-minseo',
+            name: '민',
+            displayName: '민서',
+            color: '#DDEBFF',
+            choice: 'YES',
+            responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+          },
+        ],
+      },
+    ]);
+    const { checkSocialNotifications } = await import('./appNotifications');
+
+    await checkSocialNotifications();
+
+    expect(buildCardConfirmedNotification).toHaveBeenCalledWith(expect.objectContaining({ id: 'card-confirmed' }));
+    expect(scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({
+          title: '약속이 확정되었습니다',
+          body: '민서님이 약속을 확정하였습니다. 일정에 추가됩니다.',
+          data: { url: '/schedule?date=2026-06-25', type: 'card_confirmed', id: 'card-confirmed' },
+        }),
+        trigger: { channelId: 'whenbollae-default' },
+      }),
+    );
+    expect(JSON.parse(asyncStorageValues.get(seenCardConfirmationFingerprintsKey) ?? '[]')).toEqual([
+      'card-confirmed:slot-1:CONFIRMED',
+    ]);
+  });
+
+  it('does not drop the first response notification when response fingerprint storage is missing', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(seenFriendRequestIdsKey, '[]');
+    asyncStorageValues.set(seenFriendIdsKey, '[]');
+    asyncStorageValues.set(seenCardIdsKey, '[]');
+    listRecentCards.mockResolvedValueOnce([
+      {
+        id: 'card-response-first',
+        mode: 'DIRECT',
+        status: 'PENDING',
+        title: 'Dinner',
+        hostName: 'Minseo',
+        location: 'Gangnam',
+        message: '',
+        sharedUrl: 'https://whenbollae.app/c/card-response-first',
+        createdAt: '2026-06-16T13:00:00+09:00',
+        candidates: [
+          {
+            id: 'slot-1',
+            startsAt: '2026-06-25T10:00:00.000Z',
+            endsAt: '2026-06-25T11:00:00.000Z',
+            label: 'Jun 25',
+            shortLabel: 'Jun 25',
+            summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 },
+          },
+        ],
+        participants: [
+          {
+            id: 'profile-jiu',
+            name: 'Jiu',
+            displayName: 'Jiu',
+            color: '#DDEBFF',
+            choice: 'YES',
+            responses: [{ candidateId: 'slot-1', choice: 'YES' }],
+          },
+        ],
+      },
+    ]);
+    const { checkSocialNotifications } = await import('./appNotifications');
+
+    await checkSocialNotifications();
+
+    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+    expect(scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({
+          data: { url: '/manage?tab=SENT_HAS_RESPONSE', type: 'card_response_received', id: 'card-response-first' },
+        }),
+        trigger: { channelId: 'whenbollae-default' },
+      }),
+    );
+    expect(JSON.parse(asyncStorageValues.get(seenCardResponseFingerprintsKey) ?? '[]')).toEqual([
+      'card-response-first:profile-jiu:YES:Jiu::slot-1:YES',
+    ]);
   });
 
   it('schedules appointment reminder phone notifications on the reminder channel', async () => {
@@ -686,7 +1035,7 @@ describe('app notification registration', () => {
 
     await expect(disableAppNotifications()).rejects.toThrow('토큰 삭제 실패');
 
-    await expect(getAppNotificationSettingsSnapshot()).resolves.toEqual({
+    await expect(getAppNotificationSettingsSnapshot()).resolves.toMatchObject({
       enabled: false,
       permissionStatus: 'granted',
     });

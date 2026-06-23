@@ -1,8 +1,19 @@
 import { createElement, useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { AlertTriangle, Link2, MapPin, MessageCircle, Send, UsersRound, X } from 'lucide-react-native';
-import { Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AlertTriangle, Clock3, Link2, MapPin, MessageCircle, Send, UsersRound, X } from 'lucide-react-native';
+import {
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import {
   CandidateTimeFields,
@@ -41,7 +52,11 @@ import {
   UNSHAREABLE_PREVIEW_CARD_MESSAGE,
   getShareablePreviewCard,
 } from '@/lib/previewActions';
-import { getPreviewFriendOptions, getPreviewRecipientProfileIds, selectOnePreviewFriend } from '@/lib/previewFriends';
+import {
+  getPreviewFriendOptions,
+  getPreviewRecipientProfileIds,
+  togglePreviewFriendSelection,
+} from '@/lib/previewFriends';
 import type { AppointmentMode, PromiseCard } from '@/types/promise';
 
 const INITIAL_DRAFT: CardDraft = {
@@ -52,6 +67,7 @@ const CARD_BASE_URL = (process.env.EXPO_PUBLIC_CARD_BASE_URL ?? 'https://whenbol
 
 export default function CreateCardScreen() {
   const router = useRouter();
+  const { height: windowHeight } = useWindowDimensions();
   const screenScrollRef = useRef<ScrollView>(null);
   const messageInputRef = useRef<TextInput>(null);
   const { addManagedCard } = useManagedCards();
@@ -89,10 +105,12 @@ export default function CreateCardScreen() {
   );
   const visibleTimes =
     mode === 'DIRECT' ? [times[0] ?? createDefaultDraftTime(0)] : limitDraftTimeCount(ensureDraftTimeCount(times, 2));
-  const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
+  const { options: previewFriendOptions } = useMemo(
     () => getPreviewFriendOptions(friends),
     [friends],
   );
+  const friendPickerPanelHeight = Math.min(680, Math.max(500, Math.round(windowHeight * 0.76)));
+  const selectedFriendCount = selectedFriendIds.length;
   useFocusEffect(
     useCallback(() => {
       void reloadFriends();
@@ -283,17 +301,27 @@ export default function CreateCardScreen() {
     setFeedback(null);
   }
 
+  function goToFriendAdd() {
+    setIsFriendPickerOpen(false);
+    router.push('/friends');
+  }
+
   function toggleFriendSelection(friendId: string) {
-    setSelectedFriendIds((currentIds) => selectOnePreviewFriend(currentIds, friendId));
+    setSelectedFriendIds((currentIds) => togglePreviewFriendSelection(currentIds, friendId));
   }
 
   async function handleConfirmFriendSend() {
-    if (!previewCard || selectedFriendIds.length === 0) {
+    if (!previewCard || selectedFriendCount === 0) {
       setFeedback('카드를 보낼 친구를 선택해 주세요.');
       return;
     }
 
     const recipientProfileIds = getPreviewRecipientProfileIds(friends, selectedFriendIds);
+
+    if (recipientProfileIds.length === 0) {
+      setFeedback('실제 앱 친구를 추가한 뒤 카드를 보내 주세요.');
+      return;
+    }
 
     setIsPreviewActionPending(true);
 
@@ -313,11 +341,16 @@ export default function CreateCardScreen() {
   }
 
   const previewPanel = previewCard ? (
-    <View style={styles.modalPanel}>
+    <View
+      style={[
+        styles.modalPanel,
+        isFriendPickerOpen && styles.friendPickerPanel,
+        isFriendPickerOpen ? { height: friendPickerPanelHeight } : null,
+      ]}>
       <View style={styles.modalHeader}>
         <View style={styles.modalTitleGroup}>
           <Text style={styles.modalKicker}>{getModeLabel(previewCard.mode)}</Text>
-          <Text style={styles.modalTitle}>공유 전 미리보기</Text>
+          <Text style={styles.modalTitle}>{isFriendPickerOpen ? '앱 친구에게 보내기' : '공유 전 미리보기'}</Text>
         </View>
         <Pressable
           accessibilityLabel="미리보기 닫기"
@@ -328,18 +361,49 @@ export default function CreateCardScreen() {
           <X size={20} color={palette.primaryDeep} />
         </Pressable>
       </View>
-      <DraftPreviewCard card={previewCard} />
-      <Text style={styles.expirationNotice}>{CARD_RESPONSE_WINDOW_NOTICE}</Text>
+      {isFriendPickerOpen ? (
+        <PreviewFriendSendSummary card={previewCard} />
+      ) : (
+        <>
+          <DraftPreviewCard card={previewCard} />
+          <Text style={styles.expirationNotice}>{CARD_RESPONSE_WINDOW_NOTICE}</Text>
+        </>
+      )}
       {feedback ? <Text style={styles.modalFeedback}>{feedback}</Text> : null}
       {isFriendPickerOpen ? (
         <View style={styles.friendPicker}>
-          <Text style={styles.friendPickerTitle}>보낼 친구 선택</Text>
+          <View style={styles.friendPickerHeadingRow}>
+            <Text style={styles.friendPickerTitle}>보낼 친구 선택</Text>
+            {!isFriendsLoading && previewFriendOptions.length > 0 ? (
+              <Text style={styles.friendPickerCount}>
+                {selectedFriendCount > 0 ? `${selectedFriendCount}명 선택` : `전체 ${previewFriendOptions.length}명`}
+              </Text>
+            ) : null}
+          </View>
           {isFriendsLoading ? <Text style={styles.friendPickerNotice}>친구 목록을 불러오는 중이에요.</Text> : null}
-          {!isFriendsLoading && isUsingTestFriends ? (
-            <Text style={styles.friendPickerNotice}>실제 앱 친구가 없어 테스트 친구로 보내기 흐름을 확인할 수 있어요.</Text>
+          {!isFriendsLoading && previewFriendOptions.length === 0 ? (
+            <View style={styles.friendPickerEmpty}>
+              <Text style={styles.friendPickerNotice}>
+                앱 친구가 아직 없어요. 친구 아이디로 먼저 친구를 추가하면 카드와 알림이 실제로 전달돼요.
+                {'\n'}친구 추가 후 카드 탭으로 돌아오면 이 미리보기가 유지돼요.
+              </Text>
+              <ActionButton
+                label="친구 추가"
+                variant="secondary"
+                icon={<UsersRound size={18} color={palette.primaryDeep} />}
+                disabled={isPreviewActionPending}
+                fullWidth
+                onPress={goToFriendAdd}
+              />
+            </View>
           ) : null}
-          {!isFriendsLoading ? (
-            <View style={styles.friendPickerList}>
+          {!isFriendsLoading && previewFriendOptions.length > 0 ? (
+            <ScrollView
+              contentContainerStyle={styles.friendPickerListContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              style={styles.friendPickerListScroller}>
               {previewFriendOptions.map((friend) => {
                 const selected = selectedFriendIds.includes(friend.id);
 
@@ -363,12 +427,14 @@ export default function CreateCardScreen() {
                       <Text style={styles.friendPickerMeta}>@{friend.handle}</Text>
                     </View>
                     <View style={[styles.friendCheck, selected && styles.selectedFriendCheck]}>
-                      <Text style={[styles.friendCheckText, selected && styles.selectedFriendCheckText]}>{selected ? '선택' : '대기'}</Text>
+                      <Text style={[styles.friendCheckText, selected && styles.selectedFriendCheckText]}>
+                        {selected ? '선택됨' : '선택하기'}
+                      </Text>
                     </View>
                   </Pressable>
                 );
               })}
-            </View>
+            </ScrollView>
           ) : null}
           <View style={styles.secondaryActionRow}>
             <ActionButton
@@ -379,8 +445,14 @@ export default function CreateCardScreen() {
               onPress={() => setIsFriendPickerOpen(false)}
             />
             <ActionButton
-              label={isPreviewActionPending ? '보내는 중' : '보내기'}
-              disabled={isPreviewActionPending || selectedFriendIds.length === 0}
+              label={
+                isPreviewActionPending
+                  ? '보내는 중'
+                  : selectedFriendCount > 0
+                    ? `${selectedFriendCount}명에게 보내기`
+                    : '보내기'
+              }
+              disabled={isPreviewActionPending || selectedFriendCount === 0}
               fullWidth
               onPress={() => {
                 void handleConfirmFriendSend();
@@ -406,6 +478,9 @@ export default function CreateCardScreen() {
               variant="secondary"
               icon={<UsersRound size={18} color={palette.primaryDeep} />}
               disabled={isPreviewActionPending}
+              singleLineLabel
+              style={styles.previewAppFriendButton}
+              labelStyle={styles.previewSecondaryActionLabel}
               fullWidth
               onPress={handleSendToAppFriend}
             />
@@ -414,6 +489,9 @@ export default function CreateCardScreen() {
               variant="secondary"
               icon={<Link2 size={18} color={palette.primaryDeep} />}
               disabled={isPreviewActionPending}
+              singleLineLabel
+              style={styles.previewLinkButton}
+              labelStyle={styles.previewSecondaryActionLabel}
               fullWidth
               onPress={() => {
                 void handleCopyPreviewLink();
@@ -506,17 +584,29 @@ export default function CreateCardScreen() {
         : null}
       {Platform.OS !== 'web' ? (
         <Modal animationType="fade" onRequestClose={closePreview} transparent visible={previewCard !== null}>
-          <Pressable style={styles.modalBackdrop} onPress={closePreview}>
-            <ScrollView
-              contentContainerStyle={styles.modalScrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              style={styles.modalScrollView}>
-              <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
-                {previewPanel}
-              </Pressable>
-            </ScrollView>
-          </Pressable>
+          {isFriendPickerOpen ? (
+            <View style={styles.modalBackdrop}>
+              <Pressable
+                accessibilityLabel="미리보기 닫기"
+                accessibilityRole="button"
+                onPress={closePreview}
+                style={styles.modalBackdropTouchable}
+              />
+              <View style={styles.modalPressGuard}>{previewPanel}</View>
+            </View>
+          ) : (
+            <Pressable style={styles.modalBackdrop} onPress={closePreview}>
+              <ScrollView
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                style={styles.modalScrollView}>
+                <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+                  {previewPanel}
+                </Pressable>
+              </ScrollView>
+            </Pressable>
+          )}
         </Modal>
       ) : null}
       <Modal
@@ -540,6 +630,34 @@ export default function CreateCardScreen() {
         </Pressable>
       </Modal>
     </>
+  );
+}
+
+function PreviewFriendSendSummary({ card }: { card: PromiseCard }) {
+  const timeLabel =
+    card.mode === 'POLL' && card.candidates.length > 1
+      ? card.candidates.map((candidate) => candidate.label).join(' / ')
+      : card.candidates[0]?.label ?? '시간 미정';
+  const locationLabel = card.location.trim() || '장소 미정';
+
+  return (
+    <View style={styles.previewCompactSummary}>
+      <View style={styles.previewCompactTopRow}>
+        <Text style={styles.previewCompactKicker}>{getModeLabel(card.mode)}</Text>
+        <Text numberOfLines={1} style={styles.previewCompactNotice}>
+          {CARD_RESPONSE_WINDOW_NOTICE}
+        </Text>
+      </View>
+      <Text numberOfLines={1} style={styles.previewCompactTitle}>
+        {card.title}
+      </Text>
+      <View style={styles.previewCompactMetaLine}>
+        <Clock3 size={14} color={palette.primaryDeep} />
+        <Text numberOfLines={1} style={styles.previewCompactMetaText}>
+          {timeLabel} · {locationLabel}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -659,6 +777,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  previewAppFriendButton: {
+    flex: 1.55,
+    paddingHorizontal: spacing.sm,
+  },
+  previewLinkButton: {
+    flex: 0.95,
+    paddingHorizontal: spacing.sm,
+  },
+  previewSecondaryActionLabel: {
+    fontSize: 13,
+  },
   modalBackdrop: {
     alignItems: 'center',
     backgroundColor: MODAL_BACKDROP_COLOR,
@@ -671,6 +800,13 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     zIndex: 1000,
+  },
+  modalBackdropTouchable: {
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
   },
   modalPressGuard: {
     alignItems: 'center',
@@ -695,6 +831,9 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     width: '100%',
     zIndex: 1001,
+  },
+  friendPickerPanel: {
+    gap: spacing.sm,
   },
   modalHeader: {
     alignItems: 'center',
@@ -755,6 +894,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  previewCompactSummary: {
+    backgroundColor: palette.coralSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    gap: 6,
+    padding: spacing.sm,
+  },
+  previewCompactTopRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'space-between',
+  },
+  previewCompactKicker: {
+    backgroundColor: palette.amber,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    color: palette.ink,
+    flexShrink: 0,
+    fontSize: 11,
+    fontWeight: '900',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+  },
+  previewCompactNotice: {
+    color: palette.inkMuted,
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  previewCompactTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    fontWeight: '900',
+    lineHeight: 20,
+  },
+  previewCompactMetaLine: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  previewCompactMetaText: {
+    color: palette.ink,
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '900',
+    lineHeight: 15,
+    minWidth: 0,
+  },
   validationModal: {
     gap: spacing.md,
     maxWidth: 390,
@@ -787,15 +984,39 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   friendPicker: {
+    flex: 1,
     gap: spacing.sm,
+    minHeight: 0,
+  },
+  friendPickerHeadingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
   },
   friendPickerTitle: {
     color: palette.ink,
     fontSize: 16,
     fontWeight: '900',
   },
+  friendPickerCount: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
   friendPickerList: {
     gap: spacing.xs,
+  },
+  friendPickerListScroller: {
+    flex: 1,
+    minHeight: 180,
+  },
+  friendPickerListContent: {
+    gap: spacing.xs,
+    paddingBottom: spacing.xs,
+  },
+  friendPickerEmpty: {
+    gap: spacing.sm,
   },
   friendPickerNotice: {
     backgroundColor: palette.paper,

@@ -95,6 +95,48 @@ const friendRequestRealtimeMigrationPath = join(
   'migrations',
   '20260622153000_friend_request_realtime_notifications.sql',
 );
+const mobileSyncVersionRealtimeMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260623123500_mobile_sync_version_realtime_notifications.sql',
+);
+const confirmedCardScheduleNotificationMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260623133000_confirmed_card_schedule_notification.sql',
+);
+const confirmedCardScheduleRouteDateMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260623141000_confirmed_card_schedule_route_date.sql',
+);
+const participantPeerResponsesMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260623144500_allow_card_participants_read_peer_responses.sql',
+);
+const participantRecipientReadMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260623150000_allow_card_participants_read_peer_recipients.sql',
+);
+const publicResponseRateLimitMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260623153000_public_response_rate_limit.sql',
+);
+const notificationEventOutboxMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260623160000_notification_event_outbox.sql',
+);
 
 describe('Supabase notification migrations', () => {
   it('revokes direct client execution from notification trigger functions', () => {
@@ -142,6 +184,15 @@ describe('Supabase notification migrations', () => {
     const sql = readFileSync(friendRequestRealtimeMigrationPath, 'utf8');
 
     expect(sql).toContain('alter publication supabase_realtime add table public.friend_requests;');
+    expect(sql).toContain('when duplicate_object then null;');
+  });
+
+  it('publishes per-account mobile sync versions for realtime notification refresh fallback', () => {
+    expect(existsSync(mobileSyncVersionRealtimeMigrationPath)).toBe(true);
+
+    const sql = readFileSync(mobileSyncVersionRealtimeMigrationPath, 'utf8');
+
+    expect(sql).toContain('alter publication supabase_realtime add table public.mobile_sync_versions;');
     expect(sql).toContain('when duplicate_object then null;');
   });
 
@@ -220,6 +271,98 @@ describe('Supabase notification migrations', () => {
     expect(sql).toContain(`'url', '/manage?tab=RECEIVED_CONFIRMED'`);
     expect(sql).toContain('revoke all on function public.notify_card_response_received() from authenticated;');
     expect(sql).toContain('revoke all on function public.notify_card_confirmed() from authenticated;');
+  });
+
+  it('routes confirmed-card push notifications to schedule with schedule-added copy', () => {
+    expect(existsSync(confirmedCardScheduleNotificationMigrationPath)).toBe(true);
+
+    const sql = readFileSync(confirmedCardScheduleNotificationMigrationPath, 'utf8');
+
+    expect(sql).toContain('create or replace function public.notify_card_confirmed()');
+    expect(sql).toContain("'약속이 확정되었습니다'");
+    expect(sql).toContain("|| '님이 약속을 확정하였습니다. 일정에 추가됩니다.'");
+    expect(sql).toContain(`'url', '/schedule'`);
+    expect(sql).toContain(`'type', 'card_confirmed'`);
+    expect(sql).toContain('revoke all on function public.notify_card_confirmed() from authenticated;');
+  });
+
+  it('routes confirmed-card push notifications to the selected schedule date', () => {
+    expect(existsSync(confirmedCardScheduleRouteDateMigrationPath)).toBe(true);
+
+    const sql = readFileSync(confirmedCardScheduleRouteDateMigrationPath, 'utf8');
+
+    expect(sql).toContain('create or replace function public.notify_card_confirmed()');
+    expect(sql).toContain('selected_starts_at');
+    expect(sql).toContain("'/schedule?date='");
+    expect(sql).toContain("'YYYY-MM-DD'");
+    expect(sql).toContain(`'type', 'card_confirmed'`);
+    expect(sql).toContain('revoke all on function public.notify_card_confirmed() from authenticated;');
+  });
+
+  it('lets card participants read peer respondent rows and candidate responses on accessible cards', () => {
+    expect(existsSync(participantPeerResponsesMigrationPath)).toBe(true);
+
+    const sql = readFileSync(participantPeerResponsesMigrationPath, 'utf8');
+
+    expect(sql).toContain('create policy "Users can read respondents on accessible cards"');
+    expect(sql).toContain('using (public.can_access_appointment_card(card_id));');
+    expect(sql).toContain('create policy "Users can read candidate responses on accessible cards"');
+    expect(sql).toContain('public.can_access_appointment_card(r.card_id)');
+  });
+
+  it('lets card participants read peer recipient rows on accessible cards', () => {
+    expect(existsSync(participantRecipientReadMigrationPath)).toBe(true);
+
+    const sql = readFileSync(participantRecipientReadMigrationPath, 'utf8');
+
+    expect(sql).toContain('drop policy if exists "Owners and recipients can read card recipients"');
+    expect(sql).toContain('create policy "Users can read recipients on accessible cards"');
+    expect(sql).toContain('on public.card_recipients for select');
+    expect(sql).toContain('using (public.can_access_appointment_card(card_id));');
+  });
+
+  it('adds a service-role public response rate limit bucket without anonymous table access', () => {
+    expect(existsSync(publicResponseRateLimitMigrationPath)).toBe(true);
+
+    const sql = readFileSync(publicResponseRateLimitMigrationPath, 'utf8');
+
+    expect(sql).toContain('create table if not exists public.public_response_rate_limits');
+    expect(sql).toContain('primary key (scope, key_hash, window_start)');
+    expect(sql).toContain('alter table public.public_response_rate_limits enable row level security;');
+    expect(sql).toContain('create or replace function public.check_public_response_rate_limit');
+    expect(sql).toContain('p_token_ip_hash text');
+    expect(sql).toContain('p_ip_hash text');
+    expect(sql).toContain('revoke all on function public.check_public_response_rate_limit');
+    expect(sql).toContain('grant execute on function public.check_public_response_rate_limit(text, text, integer, integer, integer) to service_role;');
+    expect(sql).toContain('revoke all on function public.check_public_response_rate_limit(text, text, integer, integer, integer) from anon;');
+    expect(sql).toContain('revoke all on function public.check_public_response_rate_limit(text, text, integer, integer, integer) from authenticated;');
+    expect(sql).not.toContain('grant execute on function public.check_public_response_rate_limit(text, text, integer, integer, integer) to anon;');
+    expect(sql).not.toContain(
+      'grant execute on function public.check_public_response_rate_limit(text, text, integer, integer, integer) to authenticated;',
+    );
+  });
+
+  it('moves Expo push delivery to a service-role notification outbox worker', () => {
+    expect(existsSync(notificationEventOutboxMigrationPath)).toBe(true);
+
+    const sql = readFileSync(notificationEventOutboxMigrationPath, 'utf8');
+
+    expect(sql).toContain('create table if not exists public.notification_events');
+    expect(sql).toContain("status text not null default 'pending'");
+    expect(sql).toContain('alter table public.notification_events enable row level security;');
+    expect(sql).toContain('create or replace function public.send_expo_push_to_profile');
+    expect(sql).toContain('insert into public.notification_events');
+    expect(sql).not.toContain('net.http_post');
+    expect(sql).not.toContain('https://exp.host/--/api/v2/push/send');
+    expect(sql).toContain('create or replace function public.claim_notification_events');
+    expect(sql).toContain('for update skip locked');
+    expect(sql).toContain('create or replace function public.mark_notification_event_delivered');
+    expect(sql).toContain('create or replace function public.mark_notification_event_failed');
+    expect(sql).toContain('grant execute on function public.claim_notification_events(integer) to service_role;');
+    expect(sql).toContain('grant execute on function public.mark_notification_event_delivered(uuid) to service_role;');
+    expect(sql).toContain('grant execute on function public.mark_notification_event_failed(uuid, text) to service_role;');
+    expect(sql).not.toContain('grant execute on function public.claim_notification_events(integer) to authenticated;');
+    expect(sql).not.toContain('grant execute on function public.claim_notification_events(integer) to anon;');
   });
 
   it('adds mobile delta sync metadata without opening anonymous access', () => {

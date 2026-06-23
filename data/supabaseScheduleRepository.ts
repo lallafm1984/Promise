@@ -1,6 +1,6 @@
-import { getCandidateEndsAt } from '@/lib/cardMenu';
+import { buildScheduleLabels, getCandidateEndsAt } from '@/lib/cardMenu';
 import { supabase } from '@/lib/supabase';
-import { toDateKey, formatSelectedDate } from '@/lib/scheduleCalendar';
+import { toDateKey } from '@/lib/scheduleCalendar';
 import type {
   CreateManualScheduleInput,
   CreateTodoInput,
@@ -83,29 +83,11 @@ function normalizeScheduleTimes(startsAt: string, endsAt: string) {
   };
 }
 
-function padTwo(value: number) {
-  return String(value).padStart(2, '0');
-}
-
-function formatScheduleTimeLabel(startsAt: string, endsAt: string) {
-  const start = new Date(startsAt);
-  const end = new Date(endsAt);
-
-  if (Number.isNaN(start.getTime())) {
-    return '시간 미정';
-  }
-
-  if (Number.isNaN(end.getTime())) {
-    return `${padTwo(start.getHours())}:${padTwo(start.getMinutes())}`;
-  }
-
-  return `${padTwo(start.getHours())}:${padTwo(start.getMinutes())} - ${padTwo(end.getHours())}:${padTwo(
-    end.getMinutes(),
-  )}`;
-}
-
 function mapAppointment(row: AppointmentRow): DisplayScheduleItem {
-  const startsAt = new Date(row.starts_at);
+  const scheduleLabels = buildScheduleLabels(row.starts_at, row.ends_at) ?? {
+    dateLabel: '날짜 미정',
+    timeLabel: '시간 미정',
+  };
 
   return {
     id: row.id,
@@ -113,8 +95,8 @@ function mapAppointment(row: AppointmentRow): DisplayScheduleItem {
     title: row.title,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
-    dateLabel: Number.isNaN(startsAt.getTime()) ? '날짜 미정' : formatSelectedDate(startsAt),
-    timeLabel: formatScheduleTimeLabel(row.starts_at, row.ends_at),
+    dateLabel: scheduleLabels.dateLabel,
+    timeLabel: scheduleLabels.timeLabel,
     location: row.location || '장소 미정',
     status: 'READY',
     source: 'MANUAL',
@@ -274,6 +256,41 @@ export const supabaseScheduleRepository: SchedulePlannerRepository = {
     }
 
     return mapTodo(data as TodoRow);
+  },
+
+  async updateTodo(todoId, input) {
+    const client = assertSupabase();
+    const user = await getAuthenticatedUser();
+    const values = cleanTodoInput(input);
+    const { data, error } = await client
+      .from('todos')
+      .update(values)
+      .eq('id', todoId)
+      .eq('owner_id', user.id)
+      .is('deleted_at', null)
+      .select('id, date_key, title, detail, done, color_key')
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return mapTodo(data as TodoRow);
+  },
+
+  async deleteTodo(todoId) {
+    const client = assertSupabase();
+    const user = await getAuthenticatedUser();
+    const { error } = await client
+      .from('todos')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', todoId)
+      .eq('owner_id', user.id)
+      .is('deleted_at', null);
+
+    if (error) {
+      throw error;
+    }
   },
 
   async toggleTodo(todoId) {

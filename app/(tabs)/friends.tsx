@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Clock3, Search, Trash2, UserPlus, UsersRound, X } from 'lucide-react-native';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -38,6 +38,7 @@ export default function FriendsScreen() {
   const [friendInputError, setFriendInputError] = useState<string | null>(null);
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [isConfirmingAction, setIsConfirmingAction] = useState(false);
   const incomingRequests = useMemo(
     () => requests.filter((request) => request.direction === 'INCOMING'),
     [requests],
@@ -71,12 +72,28 @@ export default function FriendsScreen() {
   }
 
   function closeConfirmDialog() {
+    if (isConfirmingAction) {
+      return;
+    }
+
     setConfirmDialog(null);
   }
 
-  function confirmAndClose() {
-    void confirmDialog?.onConfirm();
-    setConfirmDialog(null);
+  async function confirmAndClose() {
+    if (!confirmDialog || isConfirmingAction) {
+      return;
+    }
+
+    setIsConfirmingAction(true);
+
+    try {
+      await confirmDialog.onConfirm();
+      setConfirmDialog(null);
+    } catch {
+      return;
+    } finally {
+      setIsConfirmingAction(false);
+    }
   }
 
   async function handleSendFriendRequest() {
@@ -110,6 +127,15 @@ export default function FriendsScreen() {
       setActiveTab('REQUESTS');
     } catch (error) {
       setFriendInputError(getErrorMessage(error));
+    }
+  }
+
+  async function handleAcceptRequest(request: FriendRequest) {
+    try {
+      await acceptRequest(request.id);
+      setActiveTab('FRIENDS');
+    } catch {
+      return;
     }
   }
 
@@ -189,8 +215,7 @@ export default function FriendsScreen() {
             incomingRequests={incomingRequests}
             outgoingRequests={outgoingRequests}
             onAcceptRequest={(request) => {
-              acceptRequest(request.id);
-              setActiveTab('FRIENDS');
+              void handleAcceptRequest(request);
             }}
             onCancelRequest={handleCancelRequest}
             onDeclineRequest={(request) => {
@@ -217,6 +242,7 @@ export default function FriendsScreen() {
       <ConfirmModal
         confirmLabel={confirmDialog?.confirmLabel ?? ''}
         body={confirmDialog?.body ?? ''}
+        isSubmitting={isConfirmingAction}
         title={confirmDialog?.title ?? ''}
         visible={confirmDialog !== null}
         onCancel={closeConfirmDialog}
@@ -245,7 +271,7 @@ function FriendsList({
       ) : (
         <EmptyCard
           title="아직 친구가 없어요"
-          body="위의 친구 추가 버튼으로 아이디나 프로필 링크 요청을 보낼 수 있어요."
+          body="위의 친구 추가 버튼으로 친구 아이디 요청을 보낼 수 있어요."
         />
       )}
     </View>
@@ -464,7 +490,19 @@ function AddFriendModal({
   onClose: () => void;
   onSubmit: () => void | Promise<unknown>;
 }) {
+  const inputRef = useRef<TextInput>(null);
   const disabled = isSubmitting || normalizeFriendHandle(friendInput).length === 0;
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+
+    const focusTimer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 80);
+    return () => clearTimeout(focusTimer);
+  }, [visible]);
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
@@ -492,15 +530,18 @@ function AddFriendModal({
                 <Text style={styles.modalInputLabel}>친구 아이디 입력</Text>
               </View>
               <TextInput
+                ref={inputRef}
                 accessibilityLabel="친구 아이디 입력"
                 autoCapitalize="none"
                 autoCorrect={false}
+                autoFocus={visible}
                 onChangeText={onChangeFriendInput}
                 placeholder="@ae6ee6"
                 placeholderTextColor={palette.inkSoft}
                 style={styles.modalInput}
                 value={friendInput}
               />
+              <Text style={styles.modalInputHelp}>상대방 내정보 화면의 친구 아이디를 입력해 주세요.</Text>
             </View>
             {error ? <Text style={styles.modalError}>{error}</Text> : null}
 
@@ -532,6 +573,7 @@ function AddFriendModal({
 function ConfirmModal({
   body,
   confirmLabel,
+  isSubmitting,
   title,
   visible,
   onCancel,
@@ -539,10 +581,11 @@ function ConfirmModal({
 }: {
   body: string;
   confirmLabel: string;
+  isSubmitting: boolean;
   title: string;
   visible: boolean;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<unknown>;
 }) {
   return (
     <Modal animationType="fade" onRequestClose={onCancel} transparent visible={visible}>
@@ -557,8 +600,14 @@ function ConfirmModal({
               <Text style={styles.confirmBody}>{body}</Text>
             </View>
             <View style={styles.modalActions}>
-              <ActionButton label="취소" variant="secondary" fullWidth onPress={onCancel} />
-              <ActionButton label={confirmLabel} variant="danger" fullWidth onPress={onConfirm} />
+              <ActionButton label="취소" variant="secondary" disabled={isSubmitting} fullWidth onPress={onCancel} />
+              <ActionButton
+                label={isSubmitting ? '처리 중' : confirmLabel}
+                variant="danger"
+                disabled={isSubmitting}
+                fullWidth
+                onPress={onConfirm}
+              />
             </View>
           </View>
         </Pressable>
@@ -974,6 +1023,12 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     minHeight: 34,
     padding: 0,
+  },
+  modalInputHelp: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
   },
   modalActions: {
     flexDirection: 'row',

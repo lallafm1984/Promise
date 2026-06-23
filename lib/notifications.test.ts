@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { AppFriend, FriendRequest } from '@/lib/friends';
 import type { ReceivedCardAlert } from '@/types/promise';
 import {
+  buildCardConfirmedNotification,
+  buildCardResponseReceivedNotification,
   buildCardReceivedNotification,
   buildFriendAcceptedNotification,
   buildFriendRequestNotification,
@@ -44,6 +46,38 @@ const cardAlert: ReceivedCardAlert = {
   location: '성수 카페',
   requesterName: '민서',
   createdAt: localIso(6, 16, 13, 0),
+};
+
+const sentResponseCard = {
+  id: 'card-gangnam',
+  mode: 'DIRECT' as const,
+  status: 'PENDING' as const,
+  title: 'Gangnam dinner',
+  hostName: 'Minseo',
+  location: 'Gangnam',
+  message: '',
+  sharedUrl: 'https://whenbollae.app/c/card-gangnam',
+  createdAt: localIso(6, 16, 13, 0),
+  candidates: [
+    {
+      id: 'slot-1',
+      startsAt: localIso(6, 25, 19, 0),
+      endsAt: localIso(6, 25, 20, 0),
+      label: 'Jun 25',
+      shortLabel: 'Jun 25',
+      summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 },
+    },
+  ],
+  participants: [
+    {
+      id: 'profile-jiu',
+      name: 'Jiu',
+      displayName: 'Jiu',
+      color: '#DDEBFF',
+      choice: 'YES' as const,
+      responses: [{ candidateId: 'slot-1', choice: 'YES' as const }],
+    },
+  ],
 };
 
 const acceptedFriend: AppFriend = {
@@ -96,6 +130,24 @@ describe('notification helpers', () => {
       title: '친구가 카드를 보냈어요',
       body: '민서님이 성수 카페 약속 카드를 보냈어요.',
       data: { url: '/manage', type: 'card_received', id: 'card-seongsu' },
+    });
+    expect(buildCardResponseReceivedNotification(sentResponseCard)).toEqual({
+      title: '응답이 도착했어요',
+      body: 'Jiu님이 Gangnam 카드에 응답했어요.',
+      data: { url: '/manage?tab=SENT_HAS_RESPONSE', type: 'card_response_received', id: 'card-gangnam' },
+    });
+    expect(
+      buildCardConfirmedNotification({
+        ...sentResponseCard,
+        id: 'card-confirmed',
+        status: 'CONFIRMED',
+        requesterName: '민서',
+        selectedSlotId: 'slot-1',
+      }),
+    ).toEqual({
+      title: '약속이 확정되었습니다',
+      body: '민서님이 약속을 확정하였습니다. 일정에 추가됩니다.',
+      data: { url: '/schedule?date=2026-06-25', type: 'card_confirmed', id: 'card-confirmed' },
     });
     expect(
       buildReminderNotification({

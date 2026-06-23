@@ -1,6 +1,13 @@
-import { getCandidateEndsAt } from '@/lib/cardMenu';
-import { formatSelectedDate } from '@/lib/scheduleCalendar';
-import type { CreateManualScheduleInput, DisplayScheduleItem, TodoItem } from '@/types/promise';
+import { buildScheduleLabels, getCandidateEndsAt } from '@/lib/cardMenu';
+import type {
+  CreateManualScheduleInput,
+  CreateRecurringTodoInput,
+  DisplayScheduleItem,
+  RecurringTodoCompletion,
+  RecurringTodoItem,
+  TodoItem,
+  WeekdayIndex,
+} from '@/types/promise';
 
 export type SchedulePlannerMutation =
   | {
@@ -27,6 +34,8 @@ export type SchedulePlannerMutation =
 export interface SchedulePlannerCachePayload {
   manualScheduleItems: DisplayScheduleItem[];
   todos: TodoItem[];
+  recurringTodos: RecurringTodoItem[];
+  recurringTodoCompletions: RecurringTodoCompletion[];
   pendingMutations: SchedulePlannerMutation[];
   persisted: boolean;
   syncedAt: string | null;
@@ -39,27 +48,6 @@ interface StoredSchedulePlannerCache {
 }
 
 const SCHEDULE_PLANNER_CACHE_VERSION = 1;
-
-function padTwo(value: number) {
-  return String(value).padStart(2, '0');
-}
-
-function formatScheduleTimeLabel(startsAt: string, endsAt: string) {
-  const start = new Date(startsAt);
-  const end = new Date(endsAt);
-
-  if (Number.isNaN(start.getTime())) {
-    return '시간 미정';
-  }
-
-  if (Number.isNaN(end.getTime())) {
-    return `${padTwo(start.getHours())}:${padTwo(start.getMinutes())}`;
-  }
-
-  return `${padTwo(start.getHours())}:${padTwo(start.getMinutes())} - ${padTwo(end.getHours())}:${padTwo(
-    end.getMinutes(),
-  )}`;
-}
 
 function isSchedulePlannerMutation(value: unknown): value is SchedulePlannerMutation {
   if (!value || typeof value !== 'object') {
@@ -80,13 +68,53 @@ function getMutationScheduleId(mutation: SchedulePlannerMutation) {
   return mutation.kind === 'CREATE_MANUAL_SCHEDULE' ? mutation.localId : mutation.scheduleId;
 }
 
+function cleanOptionalText(value: string, fallback: string) {
+  const trimmed = value.trim();
+  return trimmed || fallback;
+}
+
+function isWeekdayIndex(value: number): value is WeekdayIndex {
+  return Number.isInteger(value) && value >= 0 && value <= 6;
+}
+
+function normalizeWeekdays(weekdays: number[]): WeekdayIndex[] {
+  return Array.from(new Set(weekdays.filter(isWeekdayIndex))).sort((left, right) => left - right);
+}
+
+function getWeekdayFromDateKey(dateKey: string): WeekdayIndex | null {
+  const [year, month, day] = dateKey.split('-').map(Number);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.getDay() as WeekdayIndex;
+}
+
+function getRecurringCompletion(
+  completions: RecurringTodoCompletion[],
+  recurringTodoId: string,
+  dateKey: string,
+) {
+  return completions.find((completion) => completion.recurringTodoId === recurringTodoId && completion.dateKey === dateKey);
+}
+
 export function createLocalManualScheduleItem(
   input: CreateManualScheduleInput,
   id: string,
 ): DisplayScheduleItem {
   const startsAt = input.startsAt;
   const endsAt = input.endsAt || getCandidateEndsAt(startsAt);
-  const startsAtDate = new Date(startsAt);
+  const scheduleLabels = buildScheduleLabels(startsAt, endsAt) ?? {
+    dateLabel: '날짜 미정',
+    timeLabel: '시간 미정',
+  };
 
   return {
     id,
@@ -94,13 +122,62 @@ export function createLocalManualScheduleItem(
     title: input.title.trim(),
     startsAt,
     endsAt,
-    dateLabel: Number.isNaN(startsAtDate.getTime()) ? '날짜 미정' : formatSelectedDate(startsAtDate),
-    timeLabel: formatScheduleTimeLabel(startsAt, endsAt),
+    dateLabel: scheduleLabels.dateLabel,
+    timeLabel: scheduleLabels.timeLabel,
     location: input.location.trim() || '장소 미정',
     status: 'READY',
     source: 'MANUAL',
     colorKey: input.colorKey,
   };
+}
+
+export function createLocalRecurringTodoItem(input: CreateRecurringTodoInput, id: string): RecurringTodoItem {
+  return {
+    id,
+    title: input.title.trim(),
+    detail: cleanOptionalText(input.detail, '오늘 중'),
+    weekdays: normalizeWeekdays(input.weekdays),
+    colorKey: input.colorKey,
+  };
+}
+
+export function buildRecurringTodoForDate(
+  recurringTodo: RecurringTodoItem,
+  dateKey: string,
+  completions: RecurringTodoCompletion[],
+): TodoItem | null {
+  const weekday = getWeekdayFromDateKey(dateKey);
+
+  if (weekday === null || !recurringTodo.weekdays.includes(weekday)) {
+    return null;
+  }
+
+  const completion = getRecurringCompletion(completions, recurringTodo.id, dateKey);
+
+  return {
+    id: `recurring-${recurringTodo.id}-${dateKey}`,
+    dateKey,
+    title: recurringTodo.title,
+    detail: recurringTodo.detail,
+    done: completion?.done ?? false,
+    colorKey: recurringTodo.colorKey,
+    source: 'RECURRING',
+    recurringTodoId: recurringTodo.id,
+  };
+}
+
+export function getTodosForDate(
+  todos: TodoItem[],
+  recurringTodos: RecurringTodoItem[],
+  recurringTodoCompletions: RecurringTodoCompletion[],
+  dateKey: string,
+) {
+  const oneTimeTodos = todos.filter((todo) => todo.dateKey === dateKey);
+  const generatedTodos = recurringTodos
+    .map((recurringTodo) => buildRecurringTodoForDate(recurringTodo, dateKey, recurringTodoCompletions))
+    .filter((todo): todo is TodoItem => Boolean(todo));
+
+  return [...oneTimeTodos, ...generatedTodos];
 }
 
 export function buildSchedulePlannerCache(
@@ -126,11 +203,21 @@ export function parseSchedulePlannerCache(value: string | null): SchedulePlanner
       return null;
     }
 
-    const { manualScheduleItems, todos, pendingMutations, persisted, syncedAt } = parsed.payload;
+    const {
+      manualScheduleItems,
+      todos,
+      recurringTodos = [],
+      recurringTodoCompletions = [],
+      pendingMutations,
+      persisted,
+      syncedAt,
+    } = parsed.payload;
 
     if (
       !Array.isArray(manualScheduleItems) ||
       !Array.isArray(todos) ||
+      !Array.isArray(recurringTodos) ||
+      !Array.isArray(recurringTodoCompletions) ||
       !Array.isArray(pendingMutations) ||
       !pendingMutations.every(isSchedulePlannerMutation) ||
       typeof persisted !== 'boolean'
@@ -141,6 +228,8 @@ export function parseSchedulePlannerCache(value: string | null): SchedulePlanner
     return {
       manualScheduleItems,
       todos,
+      recurringTodos,
+      recurringTodoCompletions,
       pendingMutations,
       persisted,
       syncedAt: typeof syncedAt === 'string' ? syncedAt : null,

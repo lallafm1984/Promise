@@ -71,6 +71,8 @@ export interface ScheduleItem {
 export type ScheduleSource = 'CARD' | 'MANUAL';
 
 export type ScheduleColorKey = 'coral' | 'mint' | 'lime' | 'sky' | 'amber';
+export type TodoSource = 'SINGLE' | 'RECURRING';
+export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface DisplayScheduleItem extends ScheduleItem {
   source: ScheduleSource;
@@ -84,6 +86,8 @@ export interface TodoItem {
   detail: string;
   done: boolean;
   colorKey: ScheduleColorKey;
+  source?: TodoSource;
+  recurringTodoId?: string;
 }
 
 export interface CreateManualScheduleInput {
@@ -98,6 +102,29 @@ export interface CreateTodoInput {
   dateKey: string;
   title: string;
   detail: string;
+  colorKey: ScheduleColorKey;
+}
+
+export type UpdateTodoInput = CreateTodoInput;
+
+export interface RecurringTodoItem {
+  id: string;
+  title: string;
+  detail: string;
+  weekdays: WeekdayIndex[];
+  colorKey: ScheduleColorKey;
+}
+
+export interface RecurringTodoCompletion {
+  recurringTodoId: string;
+  dateKey: string;
+  done: boolean;
+}
+
+export interface CreateRecurringTodoInput {
+  title: string;
+  detail: string;
+  weekdays: number[];
   colorKey: ScheduleColorKey;
 }
 
@@ -136,6 +163,8 @@ export interface SchedulePlannerRepository {
   deleteManualScheduleItem(scheduleId: string): Promise<void>;
   listTodos(): Promise<TodoItem[]>;
   createTodo(input: CreateTodoInput): Promise<TodoItem>;
+  updateTodo(todoId: string, input: UpdateTodoInput): Promise<TodoItem>;
+  deleteTodo(todoId: string): Promise<void>;
   toggleTodo(todoId: string): Promise<TodoItem>;
 }
 

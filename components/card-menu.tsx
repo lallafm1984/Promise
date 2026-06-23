@@ -1,6 +1,6 @@
 import { createElement, forwardRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
 import DateTimePicker from '@expo/ui/community/datetime-picker';
-import { CalendarDays, Clock3, MapPin, MessageCircle, Plus, Trash2 } from 'lucide-react-native';
+import { CalendarDays, Clock3, MapPin, MessageCircle, Plus, Trash2, UserRound } from 'lucide-react-native';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ActionButton, Card, Chip } from '@/components/ui';
@@ -26,6 +26,7 @@ import {
   mergeDraftDatePart,
   mergeDraftDateTime,
   mergeDraftTimePart,
+  shouldShowCardLocationDetail,
   type ManagedCardActionKind,
   type ManagedCardCurrentProfile,
   type ManagedCardInboxTab,
@@ -395,8 +396,10 @@ function ManagedCardRow({
   const rowMetaLabel = getManagedCardRowMetaLabel(card, currentProfile);
   const responseBadges = getReceivedCardResponseBadges(card, currentProfile);
   const responseStatItems = getManagedCardResponseStatItems(card);
+  const senderName = getManagedCardScope(card) === 'RECEIVED' ? card.requesterName?.trim() || card.hostName.trim() : '';
   const shouldShowResponseStats = getManagedCardScope(card) === 'SENT' && responseStatItems.length > 0;
   const shouldShowRowMeta = shouldShowManagedCardRowMeta(card);
+  const shouldShowLocation = shouldShowCardLocationDetail(card);
   const shouldShowParticipantResponses = card.status === 'CONFIRMED' && card.participants.length > 0;
   const canShowDeleteButton =
     canDeleteManagedCard(card, now) ||
@@ -427,6 +430,14 @@ function ManagedCardRow({
       <Text style={styles.managedTitle} numberOfLines={2}>
         {card.title}
       </Text>
+      {senderName ? (
+        <View style={styles.managedSenderRow}>
+          <UserRound size={14} color={palette.primaryDeep} />
+          <Text style={styles.managedSenderText} numberOfLines={1}>
+            {senderName}님이 보낸 카드
+          </Text>
+        </View>
+      ) : null}
       {shouldShowResponseStats ? (
         <ManagedResponseStats items={responseStatItems} />
       ) : shouldShowRowMeta ? (
@@ -440,7 +451,7 @@ function ManagedCardRow({
           text={timeLabel}
           numberOfLines={card.mode === 'POLL' ? Math.max(card.candidates.length, 2) : 2}
         />
-        <InfoPill icon={<MapPin size={15} color={palette.primaryDeep} />} text={card.location} />
+        {shouldShowLocation ? <InfoPill icon={<MapPin size={15} color={palette.primaryDeep} />} text={card.location} /> : null}
       </View>
       {responseBadges.length > 0 ? (
         <ManagedReceivedResponseBadges badges={responseBadges} />
@@ -868,6 +879,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     lineHeight: 17,
+  },
+  managedSenderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  managedSenderText: {
+    color: palette.primaryDeep,
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 17,
+    minWidth: 0,
   },
   managedResponseStats: {
     flexDirection: 'row',

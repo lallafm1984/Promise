@@ -49,4 +49,36 @@ describe('mock schedule repository', () => {
 
     expect(items.some((item) => item.id === created.id)).toBe(false);
   });
+
+  it('updates and deletes registered todo items', async () => {
+    const created = await mockScheduleRepository.createTodo({
+      dateKey: '2026-06-22',
+      title: 'before todo',
+      detail: 'before detail',
+      colorKey: 'coral',
+    });
+
+    const updated = await mockScheduleRepository.updateTodo(created.id, {
+      dateKey: '2026-06-23',
+      title: 'after todo',
+      detail: 'after detail',
+      colorKey: 'sky',
+    });
+    const itemsAfterUpdate = await mockScheduleRepository.listTodos();
+
+    expect(updated).toMatchObject({
+      id: created.id,
+      dateKey: '2026-06-23',
+      title: 'after todo',
+      detail: 'after detail',
+      colorKey: 'sky',
+      done: false,
+    });
+    expect(itemsAfterUpdate.filter((item) => item.id === created.id)).toHaveLength(1);
+
+    await mockScheduleRepository.deleteTodo(created.id);
+    const itemsAfterDelete = await mockScheduleRepository.listTodos();
+
+    expect(itemsAfterDelete.some((item) => item.id === created.id)).toBe(false);
+  });
 });

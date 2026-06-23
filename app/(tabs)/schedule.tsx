@@ -1,13 +1,16 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import DateTimePicker from '@expo/ui/community/datetime-picker';
 import {
   Animated,
   Easing,
+  KeyboardAvoidingView,
   LayoutAnimation,
   Modal,
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -28,11 +31,11 @@ import {
   MessageCircle,
   Pencil,
   Plus,
+  Repeat2,
   Trash2,
   X,
 } from 'lucide-react-native';
 
-import { CandidateTimeFields } from '@/components/card-menu';
 import { AppScreen, Card, Chip, SectionHeader } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
 import { useManagedCards } from '@/hooks/useManagedCards';
@@ -46,8 +49,11 @@ import {
   getCandidateEndsAt,
   getParticipantChoiceForSelectedSlot,
   getResponseChoiceLabel,
+  getScheduleParticipantsForViewer,
+  mergeDraftDateTime,
 } from '@/lib/cardMenu';
 import { filterScheduleItemsByRemovedCardIds, getCardScheduleDeleteConfirmation } from '@/lib/managedCards';
+import { getTodosForDate } from '@/lib/schedulePlannerState';
 import {
   compareScheduleItems,
   formatMonthTitle,
@@ -60,7 +66,15 @@ import {
   startOfDay,
   toDateKey,
 } from '@/lib/scheduleCalendar';
-import type { DisplayScheduleItem, PromiseCard, ResponseChoice, ScheduleColorKey, TodoItem } from '@/types/promise';
+import type {
+  DisplayScheduleItem,
+  PromiseCard,
+  RecurringTodoItem,
+  ResponseChoice,
+  ScheduleColorKey,
+  TodoItem,
+  WeekdayIndex,
+} from '@/types/promise';
 
 type ScheduleMode = 'SCHEDULE' | 'TODO';
 type ScheduleParticipant = NonNullable<DisplayScheduleItem['participants']>[number];
@@ -93,6 +107,13 @@ const colorOptions: ScheduleColorOption[] = [
   { key: 'sky', label: '스카이', soft: palette.skySoft, accent: palette.sky },
   { key: 'amber', label: '앰버', soft: palette.amberSoft, accent: palette.amber },
 ];
+const completedTodoColorByKey: Record<ScheduleColorKey, string> = {
+  coral: '#F5C0A5',
+  mint: '#C9DDC8',
+  lime: '#DBE8A7',
+  sky: '#C8DEE2',
+  amber: '#FFD091',
+};
 const scheduleColorOptions = colorOptions.filter((option) => option.key !== 'coral');
 
 function getColorOption(options: ScheduleColorOption[], key: ScheduleColorKey = 'sky') {
@@ -101,6 +122,10 @@ function getColorOption(options: ScheduleColorOption[], key: ScheduleColorKey = 
 
 function getScheduleColor(key: ScheduleColorKey = 'sky') {
   return getColorOption(colorOptions, key);
+}
+
+function getCompletedTodoBackgroundColor(key: ScheduleColorKey = 'sky') {
+  return completedTodoColorByKey[key] ?? completedTodoColorByKey.sky;
 }
 
 function getManualScheduleColor(key: ScheduleColorKey = 'sky') {
@@ -144,6 +169,16 @@ function getScheduleParticipantChoiceBadgeStyle(choice: ResponseChoice) {
 }
 
 const weekdayLabels = ['일', '월', '화', '수', '목', '금', '토'];
+const recurringWeekdayOptions: Array<{ value: WeekdayIndex; label: string }> = [
+  { value: 1, label: '월' },
+  { value: 2, label: '화' },
+  { value: 3, label: '수' },
+  { value: 4, label: '목' },
+  { value: 5, label: '금' },
+  { value: 6, label: '토' },
+  { value: 0, label: '일' },
+];
+const defaultRecurringWeekdays: WeekdayIndex[] = [1, 2, 3, 4, 5];
 const TODO_WEEK_DRAG_LIMIT = 60;
 const TODO_WEEK_RELEASE_THRESHOLD = 34;
 const TODO_WEEK_SLIDE_DISTANCE = 430;
@@ -165,10 +200,12 @@ if (Platform.OS === 'android') {
 export default function ScheduleScreen() {
   const { date } = useLocalSearchParams<{ date?: string | string[] }>();
   const { scheduleItems, reload: reloadPromiseData } = usePromiseData();
-  const { managedCards, removedCardIds, requestManagedCardChange, removeManagedCard } = useManagedCards();
+  const { profile, managedCards, removedCardIds, requestManagedCardChange, removeManagedCard } = useManagedCards();
   const {
     manualScheduleItems,
     todos,
+    recurringTodos,
+    recurringTodoCompletions,
     isLoading: plannerLoading,
     isMutating,
     error: plannerError,
@@ -176,13 +213,19 @@ export default function ScheduleScreen() {
     updateManualScheduleItem,
     deleteManualScheduleItem,
     createTodo,
+    updateTodo,
+    deleteTodo,
     toggleTodo: saveTodoToggle,
+    createRecurringTodo,
+    deleteRecurringTodo,
+    toggleRecurringTodoCompletion,
   } = useSchedulePlanner();
   const [activeMode, setActiveMode] = useState<ScheduleMode>('SCHEDULE');
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
   const [composerMode, setComposerMode] = useState<ScheduleMode | null>(null);
   const [editingScheduleItem, setEditingScheduleItem] = useState<DisplayScheduleItem | null>(null);
   const [editingCardScheduleItem, setEditingCardScheduleItem] = useState<DisplayScheduleItem | null>(null);
+  const [editingTodoItem, setEditingTodoItem] = useState<TodoItem | null>(null);
   const [cardActionItem, setCardActionItem] = useState<DisplayScheduleItem | null>(null);
   const [scheduleDialog, setScheduleDialog] = useState<ScheduleDialogState | null>(null);
   const [isCardActionPending, setIsCardActionPending] = useState(false);
@@ -193,6 +236,12 @@ export default function ScheduleScreen() {
   const [todoTitle, setTodoTitle] = useState('');
   const [todoDetail, setTodoDetail] = useState('');
   const [todoColor, setTodoColor] = useState<ScheduleColorKey>('coral');
+  const [isRecurringTodoModalOpen, setIsRecurringTodoModalOpen] = useState(false);
+  const [isRecurringTodoFormOpen, setIsRecurringTodoFormOpen] = useState(false);
+  const [recurringTodoTitle, setRecurringTodoTitle] = useState('');
+  const [recurringTodoDetail, setRecurringTodoDetail] = useState('');
+  const [recurringTodoColor, setRecurringTodoColor] = useState<ScheduleColorKey>('mint');
+  const [recurringTodoWeekdays, setRecurringTodoWeekdays] = useState<WeekdayIndex[]>(defaultRecurringWeekdays);
   const [isWeekTransitioning, setIsWeekTransitioning] = useState(false);
   const calendarMotion = useRef(new Animated.Value(1)).current;
   const contentMotion = useRef(new Animated.Value(1)).current;
@@ -202,16 +251,20 @@ export default function ScheduleScreen() {
   const todoWeekCells = useMemo(() => getWeekCells(selectedDate), [selectedDate]);
   const cardScheduleItems = useMemo<DisplayScheduleItem[]>(
     () => {
-      const serverCardScheduleItems = filterScheduleItemsByRemovedCardIds(scheduleItems, removedCardIds);
+      const currentProfile = profile ? { id: profile.id, displayName: profile.displayName } : undefined;
+      const serverCardScheduleItems = filterScheduleItemsByRemovedCardIds(scheduleItems, removedCardIds).map((item) => ({
+        ...item,
+        participants: getScheduleParticipantsForViewer(item.participants ?? [], currentProfile),
+      }));
       const serverCardIds = new Set(serverCardScheduleItems.map((item) => item.cardId));
       const localCardScheduleItems = managedCards
-        .map((card) => buildScheduleItemFromConfirmedCard(card))
+        .map((card) => buildScheduleItemFromConfirmedCard(card, currentProfile))
         .filter((item): item is NonNullable<ReturnType<typeof buildScheduleItemFromConfirmedCard>> => Boolean(item))
         .filter((item) => !serverCardIds.has(item.cardId));
 
       return [...serverCardScheduleItems, ...localCardScheduleItems].map((item) => ({ ...item, source: 'CARD' }));
     },
-    [managedCards, removedCardIds, scheduleItems],
+    [managedCards, profile, removedCardIds, scheduleItems],
   );
   const allScheduleItems = useMemo<DisplayScheduleItem[]>(
     () => [...manualScheduleItems, ...cardScheduleItems],
@@ -223,13 +276,13 @@ export default function ScheduleScreen() {
   );
   const todoCounts = useMemo(
     () =>
-      todos.reduce<Record<string, number>>((counts, todo) => {
+      todoWeekCells.reduce<Record<string, number>>((counts, cell) => {
         return {
           ...counts,
-          [todo.dateKey]: (counts[todo.dateKey] ?? 0) + 1,
+          [cell.key]: getTodosForDate(todos, recurringTodos, recurringTodoCompletions, cell.key).length,
         };
       }, {}),
-    [todos],
+    [recurringTodoCompletions, recurringTodos, todoWeekCells, todos],
   );
   const calendarRows = useMemo(
     () => getVisibleCalendarRows(visibleMonth, selectedDate, true),
@@ -243,14 +296,11 @@ export default function ScheduleScreen() {
     [allScheduleItems, selectedDateKey, visibleMonth],
   );
   const selectedTodos = useMemo(
-    () =>
-      todos
-        .filter((todo) => todo.dateKey === selectedDateKey)
-        .sort((left, right) => Number(left.done) - Number(right.done)),
-    [selectedDateKey, todos],
+    () => getTodosForDate(todos, recurringTodos, recurringTodoCompletions, selectedDateKey),
+    [recurringTodoCompletions, recurringTodos, selectedDateKey, todos],
   );
   const isScheduleMutating = isMutating || isCardActionPending;
-  const openTodoCount = selectedTodos.filter((todo) => !todo.done).length;
+  const completedTodoCount = selectedTodos.filter((todo) => todo.done).length;
   const weekPanResponder = useMemo(
     () =>
       PanResponder.create({
@@ -455,6 +505,7 @@ export default function ScheduleScreen() {
     setComposerMode(null);
     setEditingScheduleItem(null);
     setEditingCardScheduleItem(null);
+    setEditingTodoItem(null);
   }
 
   function findManagedCardForSchedule(item: DisplayScheduleItem) {
@@ -655,9 +706,29 @@ export default function ScheduleScreen() {
 
   function openTodoComposer() {
     setEditingScheduleItem(null);
+    setEditingCardScheduleItem(null);
+    setEditingTodoItem(null);
     setTodoTitle('');
     setTodoDetail('');
     setTodoColor('coral');
+    setComposerMode('TODO');
+  }
+
+  function openTodoEditor(todo: TodoItem) {
+    if (todo.source === 'RECURRING') {
+      setIsRecurringTodoModalOpen(true);
+      return;
+    }
+
+    const todoDate = parseDateKey(todo.dateKey);
+
+    setEditingScheduleItem(null);
+    setEditingCardScheduleItem(null);
+    setEditingTodoItem(todo);
+    setSelectedDate(todoDate ? startOfDay(todoDate) : selectedDate);
+    setTodoTitle(todo.title);
+    setTodoDetail(todo.detail);
+    setTodoColor(todo.colorKey);
     setComposerMode('TODO');
   }
 
@@ -669,21 +740,122 @@ export default function ScheduleScreen() {
     }
 
     try {
-      await createTodo({
-        dateKey: selectedDateKey,
+      const input = {
+        dateKey: editingTodoItem?.dateKey ?? selectedDateKey,
         title,
         detail: todoDetail.trim() || '오늘 중',
         colorKey: todoColor,
-      });
-      setComposerMode(null);
+      };
+
+      if (editingTodoItem) {
+        await updateTodo(editingTodoItem.id, input);
+      } else {
+        await createTodo(input);
+      }
+
+      closeComposer();
       runMotionFeedback(contentMotion);
     } catch {
       runMotionFeedback(contentMotion);
     }
   }
 
-  function toggleTodo(todoId: string) {
-    void saveTodoToggle(todoId)
+  function requestDeleteEditingTodoItem() {
+    if (!editingTodoItem) {
+      return;
+    }
+
+    const todo = editingTodoItem;
+
+    showScheduleConfirm({
+      title: '할일 삭제',
+      body: `"${todo.title}" 할일을 삭제할까요?`,
+      confirmLabel: '삭제',
+      onConfirm: () => {
+        void deleteTodo(todo.id)
+          .then(() => {
+            closeComposer();
+            runMotionFeedback(contentMotion);
+          })
+          .catch(() => {
+            showScheduleNotice('할일을 삭제하지 못했어요', '잠시 후 다시 시도해 주세요.', 'danger');
+            runMotionFeedback(contentMotion);
+          });
+      },
+    });
+  }
+
+  function resetRecurringTodoDraft() {
+    setRecurringTodoTitle('');
+    setRecurringTodoDetail('');
+    setRecurringTodoColor('mint');
+    setRecurringTodoWeekdays(defaultRecurringWeekdays);
+  }
+
+  function openRecurringTodoModal() {
+    setIsRecurringTodoModalOpen(true);
+  }
+
+  function closeRecurringTodoModal() {
+    setIsRecurringTodoModalOpen(false);
+    setIsRecurringTodoFormOpen(false);
+    resetRecurringTodoDraft();
+  }
+
+  function toggleRecurringWeekday(weekday: WeekdayIndex) {
+    setRecurringTodoWeekdays((currentWeekdays) => {
+      if (currentWeekdays.includes(weekday)) {
+        return currentWeekdays.filter((currentWeekday) => currentWeekday !== weekday);
+      }
+
+      return [...currentWeekdays, weekday].sort((left, right) => left - right);
+    });
+  }
+
+  function submitRecurringTodo() {
+    const title = recurringTodoTitle.trim();
+
+    if (!title) {
+      showScheduleNotice('반복할일 이름을 입력해 주세요', '반복해서 표시할 할일을 입력해 주세요.', 'danger');
+      return;
+    }
+
+    if (recurringTodoWeekdays.length === 0) {
+      showScheduleNotice('요일을 선택해 주세요', '반복할 요일을 하나 이상 선택해 주세요.', 'danger');
+      return;
+    }
+
+    createRecurringTodo({
+      title,
+      detail: recurringTodoDetail,
+      weekdays: recurringTodoWeekdays,
+      colorKey: recurringTodoColor,
+    });
+    resetRecurringTodoDraft();
+    setIsRecurringTodoFormOpen(false);
+    runMotionFeedback(contentMotion);
+  }
+
+  function requestDeleteRecurringTodoItem(recurringTodo: RecurringTodoItem) {
+    showScheduleConfirm({
+      title: '반복할일 삭제',
+      body: `"${recurringTodo.title}" 반복할일을 삭제할까요? 선택된 요일에 더 이상 표시되지 않아요.`,
+      confirmLabel: '삭제',
+      onConfirm: () => {
+        deleteRecurringTodo(recurringTodo.id);
+        runMotionFeedback(contentMotion);
+      },
+    });
+  }
+
+  function toggleTodoOptimistic(todo: TodoItem) {
+    if (todo.source === 'RECURRING' && todo.recurringTodoId) {
+      toggleRecurringTodoCompletion(todo.recurringTodoId, todo.dateKey);
+      runMotionFeedback(contentMotion);
+      return;
+    }
+
+    void saveTodoToggle(todo.id)
       .then(() => {
         runMotionFeedback(contentMotion);
       })
@@ -848,20 +1020,24 @@ export default function ScheduleScreen() {
         {plannerLoading ? <Text style={styles.syncText}>일정 동기화 중...</Text> : null}
         {plannerError ? <Text style={styles.errorText}>{plannerError}</Text> : null}
         {activeMode === 'SCHEDULE' ? (
-        <SchedulePanel
-          selectedDate={selectedDate}
-          selectedItems={selectedItems}
-          onAdd={openScheduleComposer}
-          onEdit={openScheduleEditor}
-          onDeleteCardSchedule={requestDeleteCardSchedule}
-        />
+          <SchedulePanel
+            isLoading={plannerLoading}
+            selectedDate={selectedDate}
+            selectedItems={selectedItems}
+            onAdd={openScheduleComposer}
+            onEdit={openScheduleEditor}
+            onDeleteCardSchedule={requestDeleteCardSchedule}
+          />
         ) : (
           <TodoPanel
-            openCount={openTodoCount}
+            completedCount={completedTodoCount}
             selectedDate={selectedDate}
             selectedTodos={selectedTodos}
+            totalCount={selectedTodos.length}
             onAdd={openTodoComposer}
-            onToggle={toggleTodo}
+            onEdit={openTodoEditor}
+            onOpenRecurring={openRecurringTodoModal}
+            onToggle={toggleTodoOptimistic}
           />
         )}
       </Animated.View>
@@ -880,6 +1056,7 @@ export default function ScheduleScreen() {
         todoColor={todoColor}
         todoDetail={todoDetail}
         todoTitle={todoTitle}
+        isEditingTodo={Boolean(editingTodoItem)}
         onChangeScheduleColor={setScheduleColor}
         onChangeScheduleLocation={setScheduleLocation}
         onChangeScheduleTime={setScheduleTime}
@@ -889,6 +1066,7 @@ export default function ScheduleScreen() {
         onChangeTodoTitle={setTodoTitle}
         onClose={closeComposer}
         onDeleteSchedule={requestDeleteEditingScheduleItem}
+        onDeleteTodo={requestDeleteEditingTodoItem}
         onSubmitSchedule={submitScheduleItem}
         onSubmitTodo={submitTodoItem}
       />
@@ -898,6 +1076,23 @@ export default function ScheduleScreen() {
         onClose={closeCardActions}
         onDelete={requestDeleteCardSchedule}
         onEdit={openCardScheduleEditor}
+      />
+      <RecurringTodoModal
+        isFormOpen={isRecurringTodoFormOpen}
+        recurringTodos={recurringTodos}
+        selectedWeekdays={recurringTodoWeekdays}
+        title={recurringTodoTitle}
+        detail={recurringTodoDetail}
+        color={recurringTodoColor}
+        visible={isRecurringTodoModalOpen}
+        onAddPress={() => setIsRecurringTodoFormOpen(true)}
+        onChangeColor={setRecurringTodoColor}
+        onChangeDetail={setRecurringTodoDetail}
+        onChangeTitle={setRecurringTodoTitle}
+        onClose={closeRecurringTodoModal}
+        onDelete={requestDeleteRecurringTodoItem}
+        onSubmit={submitRecurringTodo}
+        onToggleWeekday={toggleRecurringWeekday}
       />
       <ScheduleDialogModal dialog={scheduleDialog} onClose={() => setScheduleDialog(null)} />
     </>
@@ -1059,12 +1254,14 @@ function TodoWeekStrip({
 }
 
 function SchedulePanel({
+  isLoading,
   selectedDate,
   selectedItems,
   onAdd,
   onEdit,
   onDeleteCardSchedule,
 }: {
+  isLoading: boolean;
   selectedDate: Date;
   selectedItems: DisplayScheduleItem[];
   onAdd: () => void;
@@ -1074,7 +1271,17 @@ function SchedulePanel({
   return (
     <>
       <SectionHeader title={`${formatSelectedDate(selectedDate)} 일정`} action={`${selectedItems.length}개`} />
-      {selectedItems.length > 0 ? (
+      {selectedItems.length === 0 && isLoading ? (
+        <Card style={styles.emptyState}>
+          <View style={styles.emptyIcon}>
+            <CalendarDays size={23} color={palette.primaryDeep} />
+          </View>
+          <View style={styles.emptyCopy}>
+            <Text style={styles.emptyTitle}>일정을 불러오고 있어요</Text>
+            <Text style={styles.emptyBody}>직접 추가한 일정을 먼저 확인하는 중이에요.</Text>
+          </View>
+        </Card>
+      ) : selectedItems.length > 0 ? (
         <View style={styles.list}>
           {selectedItems.map((item) => (
             <ScheduleItemCard key={item.id} item={item} onEdit={onEdit} onDeleteCardSchedule={onDeleteCardSchedule} />
@@ -1088,13 +1295,22 @@ function SchedulePanel({
           <View style={styles.emptyCopy}>
             <Text style={styles.emptyTitle}>이 날의 일정이 없어요</Text>
             <Text style={styles.emptyBody}>일정 추가를 누르면 선택한 날짜에 임시 일정 카드가 들어와요.</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onAdd}
+              style={({ pressed }) => [styles.addButton, styles.emptyAddButton, pressed && styles.pressed]}>
+              <Plus size={17} color={palette.primaryDeep} />
+              <Text style={styles.addButtonText}>일정 추가</Text>
+            </Pressable>
           </View>
         </Card>
       )}
-      <Pressable accessibilityRole="button" onPress={onAdd} style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
-        <Plus size={17} color={palette.primaryDeep} />
-        <Text style={styles.addButtonText}>일정 추가</Text>
-      </Pressable>
+      {selectedItems.length > 0 ? (
+        <Pressable accessibilityRole="button" onPress={onAdd} style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
+          <Plus size={17} color={palette.primaryDeep} />
+          <Text style={styles.addButtonText}>일정 추가</Text>
+        </Pressable>
+      ) : null}
     </>
   );
 }
@@ -1212,69 +1428,277 @@ function ScheduleItemCard({
 }
 
 function TodoPanel({
-  openCount,
+  completedCount,
   selectedDate,
   selectedTodos,
+  totalCount,
   onAdd,
+  onEdit,
+  onOpenRecurring,
   onToggle,
 }: {
-  openCount: number;
+  completedCount: number;
   selectedDate: Date;
   selectedTodos: TodoItem[];
+  totalCount: number;
   onAdd: () => void;
-  onToggle: (todoId: string) => void;
+  onEdit: (todo: TodoItem) => void;
+  onOpenRecurring: () => void;
+  onToggle: (todo: TodoItem) => void;
 }) {
   return (
     <View style={styles.todoPanel}>
       <View style={styles.todoDateHeader}>
         <Text style={styles.todoDateTitle}>{formatTodoDayTitle(selectedDate)}</Text>
-        <Text style={styles.todoDateMeta}>{openCount > 0 ? `${openCount}개 남음` : ''}</Text>
+        <Text style={styles.todoDateMeta}>{`완료 ${completedCount}/${totalCount}`}</Text>
       </View>
       <View style={styles.todoDivider} />
 
       {selectedTodos.length > 0 ? (
         <View style={styles.todoList}>
           {selectedTodos.map((todo) => (
-            <TodoRow key={todo.id} todo={todo} onToggle={() => onToggle(todo.id)} />
+            <TodoRow key={todo.id} todo={todo} onEdit={() => onEdit(todo)} onToggle={() => onToggle(todo)} />
           ))}
         </View>
       ) : (
         <Text style={styles.todoEmptyText}>이날의 할일이 없습니다.</Text>
       )}
 
+      <View style={styles.todoActionRow}>
+        <Pressable
+          accessibilityLabel="할일 추가"
+          accessibilityRole="button"
+          onPress={onAdd}
+          style={({ pressed }) => [styles.addButton, styles.todoActionButton, pressed && styles.pressed]}>
+          <Plus size={17} color={palette.primaryDeep} />
+          <Text style={styles.addButtonText}>할일 추가</Text>
+        </Pressable>
+        <Pressable
+          accessibilityLabel="반복할일"
+          accessibilityRole="button"
+          onPress={onOpenRecurring}
+          style={({ pressed }) => [styles.addButton, styles.todoActionButton, pressed && styles.pressed]}>
+          <Repeat2 size={17} color={palette.primaryDeep} />
+          <Text style={styles.addButtonText}>반복할일</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function TodoRow({ todo, onEdit, onToggle }: { todo: TodoItem; onEdit: () => void; onToggle: () => void }) {
+  const color = getScheduleColor(todo.colorKey);
+  const backgroundColor = todo.done ? getCompletedTodoBackgroundColor(todo.colorKey) : color.soft;
+
+  return (
+    <View style={[styles.todoRow, { backgroundColor }]}>
       <Pressable
-        accessibilityLabel="할일 추가"
+        accessibilityLabel={`${todo.title} 완료 전환`}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: todo.done }}
+        onPress={onToggle}
+        style={({ pressed }) => [styles.todoCheckButton, pressed && styles.pressed]}>
+        <View style={[styles.checkbox, todo.done && styles.checkedBox]}>
+          {todo.done ? <Check size={16} color={palette.onLight} /> : null}
+        </View>
+      </Pressable>
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: todo.done }}
+        onPress={onToggle}
+        style={({ pressed }) => [styles.todoCopy, pressed && styles.pressed]}>
+        <Text style={[styles.todoTitle, todo.done && styles.doneTodoText]}>{todo.title}</Text>
+        <Text style={[styles.todoDetail, todo.done && styles.doneTodoText]}>{todo.detail}</Text>
+      </Pressable>
+      <Pressable
+        accessibilityLabel={`${todo.title} 편집`}
         accessibilityRole="button"
-        onPress={onAdd}
-        style={({ pressed }) => [styles.addButton, styles.todoAddButton, pressed && styles.pressed]}>
-        <Plus size={17} color={palette.primaryDeep} />
-        <Text style={styles.addButtonText}>할일 추가</Text>
+        hitSlop={8}
+        onPress={onEdit}
+        style={({ pressed }) => [styles.todoEditButton, pressed && styles.pressed]}>
+        <Pencil size={18} color={palette.primaryDeep} />
+        <Text style={styles.todoEditButtonText}>편집</Text>
       </Pressable>
     </View>
   );
 }
 
-function TodoRow({ todo, onToggle }: { todo: TodoItem; onToggle: () => void }) {
-  const color = getScheduleColor(todo.colorKey);
+function formatRecurringWeekdays(weekdays: WeekdayIndex[]) {
+  return recurringWeekdayOptions
+    .filter((option) => weekdays.includes(option.value))
+    .map((option) => option.label)
+    .join(', ');
+}
 
+function RecurringTodoModal({
+  color,
+  detail,
+  isFormOpen,
+  recurringTodos,
+  selectedWeekdays,
+  title,
+  visible,
+  onAddPress,
+  onChangeColor,
+  onChangeDetail,
+  onChangeTitle,
+  onClose,
+  onDelete,
+  onSubmit,
+  onToggleWeekday,
+}: {
+  color: ScheduleColorKey;
+  detail: string;
+  isFormOpen: boolean;
+  recurringTodos: RecurringTodoItem[];
+  selectedWeekdays: WeekdayIndex[];
+  title: string;
+  visible: boolean;
+  onAddPress: () => void;
+  onChangeColor: (value: ScheduleColorKey) => void;
+  onChangeDetail: (value: string) => void;
+  onChangeTitle: (value: string) => void;
+  onClose: () => void;
+  onDelete: (recurringTodo: RecurringTodoItem) => void;
+  onSubmit: () => void;
+  onToggleWeekday: (weekday: WeekdayIndex) => void;
+}) {
   return (
-    <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked: todo.done }}
-      onPress={onToggle}
-      style={({ pressed }) => [
-        styles.todoRow,
-        { backgroundColor: todo.done ? palette.mintSoft : color.soft },
-        pressed && styles.pressed,
-      ]}>
-      <View style={[styles.checkbox, todo.done && styles.checkedBox]}>
-        {todo.done ? <Check size={16} color={palette.onLight} /> : null}
-      </View>
-      <View style={styles.todoCopy}>
-        <Text style={[styles.todoTitle, todo.done && styles.doneTodoText]}>{todo.title}</Text>
-        <Text style={[styles.todoDetail, todo.done && styles.doneTodoText]}>{todo.detail}</Text>
-      </View>
-    </Pressable>
+    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.recurringTodoKeyboardAvoider}>
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            accessibilityLabel="반복할일 배경 닫기"
+            accessibilityRole="button"
+            onPress={onClose}
+            style={styles.modalBackdropTouchable}
+          />
+          <View style={[styles.modalPressGuard, styles.recurringTodoPressGuard]}>
+            <View style={[styles.modalPanel, styles.recurringTodoPanel, isFormOpen && styles.recurringTodoFormPanel]}>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalTitleGroup}>
+                  <Text style={styles.modalKicker}>반복 설정</Text>
+                  <Text style={styles.modalTitle}>반복할일</Text>
+                </View>
+                <Pressable
+                  accessibilityLabel="반복할일 닫기"
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={onClose}
+                  style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
+                  <X size={19} color={palette.primaryDeep} />
+                </Pressable>
+              </View>
+
+              {!isFormOpen ? (
+                <ScrollView
+                  contentContainerStyle={styles.recurringTodoScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
+                  style={styles.recurringTodoScroll}>
+                  {recurringTodos.length > 0 ? (
+                    <View style={styles.recurringTodoList}>
+                      {recurringTodos.map((recurringTodo) => (
+                        <View key={recurringTodo.id} style={styles.recurringTodoRow}>
+                          <View style={styles.recurringTodoCopy}>
+                            <Text style={styles.recurringTodoTitle} numberOfLines={1}>
+                              {recurringTodo.title}
+                            </Text>
+                            <Text style={styles.recurringTodoMeta} numberOfLines={2}>
+                              {formatRecurringWeekdays(recurringTodo.weekdays)} · {recurringTodo.detail}
+                            </Text>
+                          </View>
+                          <Pressable
+                            accessibilityLabel={`${recurringTodo.title} 반복할일 삭제`}
+                            accessibilityRole="button"
+                            onPress={() => onDelete(recurringTodo)}
+                            style={({ pressed }) => [styles.recurringTodoDeleteButton, pressed && styles.pressed]}>
+                            <Trash2 size={15} color={palette.primaryDeep} />
+                            <Text style={styles.recurringTodoDeleteText}>삭제</Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={styles.recurringTodoEmptyText}>등록된 반복할일이 없습니다.</Text>
+                  )}
+                </ScrollView>
+              ) : (
+                <View style={styles.recurringTodoFormBody}>
+                  <View style={styles.recurringTodoForm}>
+                    <ModalInput
+                      label="반복할일"
+                      placeholder="예: 운동하기"
+                      value={title}
+                      onChangeText={onChangeTitle}
+                    />
+                    <ModalInput
+                      label="메모"
+                      placeholder="예: 30분"
+                      value={detail}
+                      onChangeText={onChangeDetail}
+                    />
+                    <View style={styles.weekdayPickerShell}>
+                      <Text style={styles.modalInputLabel}>요일</Text>
+                      <View style={styles.recurringWeekdayRow}>
+                        {recurringWeekdayOptions.map((option) => {
+                          const selected = selectedWeekdays.includes(option.value);
+
+                          return (
+                            <Pressable
+                              key={option.value}
+                              accessibilityLabel={`${option.label}요일 반복`}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected }}
+                              onPress={() => onToggleWeekday(option.value)}
+                              style={({ pressed }) => [
+                                styles.recurringWeekdayButton,
+                                selected && styles.selectedRecurringWeekdayButton,
+                                pressed && styles.pressed,
+                              ]}>
+                              <Text
+                                style={[
+                                  styles.recurringWeekdayText,
+                                  selected && styles.selectedRecurringWeekdayText,
+                                ]}>
+                                {option.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+                    <ColorPicker label="카드 색상" value={color} onChange={onChangeColor} />
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.recurringTodoFooter}>
+                {isFormOpen ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={onSubmit}
+                    style={({ pressed }) => [styles.modalSubmitButton, pressed && styles.pressed]}>
+                    <Text style={styles.modalSubmitText}>추가하기</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={onAddPress}
+                    style={({ pressed }) => [styles.modalActionButton, pressed && styles.pressed]}>
+                    <Plus size={16} color={palette.onLight} />
+                    <Text style={styles.modalSubmitText}>추가하기</Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -1357,6 +1781,7 @@ function ComposerModal({
   scheduleTitle,
   isEditingSchedule,
   isEditingCardSchedule,
+  isEditingTodo,
   isSubmitting,
   selectedDate,
   todoColor,
@@ -1371,6 +1796,7 @@ function ComposerModal({
   onChangeTodoTitle,
   onClose,
   onDeleteSchedule,
+  onDeleteTodo,
   onSubmitSchedule,
   onSubmitTodo,
 }: {
@@ -1381,6 +1807,7 @@ function ComposerModal({
   scheduleTitle: string;
   isEditingSchedule: boolean;
   isEditingCardSchedule: boolean;
+  isEditingTodo: boolean;
   isSubmitting: boolean;
   selectedDate: Date;
   todoColor: ScheduleColorKey;
@@ -1395,6 +1822,7 @@ function ComposerModal({
   onChangeTodoTitle: (value: string) => void;
   onClose: () => void;
   onDeleteSchedule: () => void;
+  onDeleteTodo: () => void;
   onSubmitSchedule: () => void;
   onSubmitTodo: () => void;
 }) {
@@ -1407,14 +1835,24 @@ function ComposerModal({
         ? scheduleLocation.trim().length === 0
         : scheduleTitle.trim().length === 0
       : todoTitle.trim().length === 0);
-  const modalTitle = isEditingCardSchedule ? '카드 일정 편집' : isSchedule && isEditingSchedule ? '일정 편집' : title;
-  const submitLabel = isEditingCardSchedule ? '공유하기' : isSchedule && isEditingSchedule ? '수정 저장' : title;
+  const modalTitle = isEditingCardSchedule
+    ? '카드 일정 편집'
+    : isSchedule && isEditingSchedule
+      ? '일정 편집'
+      : !isSchedule && isEditingTodo
+        ? '할일 편집'
+        : title;
+  const submitLabel = isEditingCardSchedule
+    ? '공유하기'
+    : (isSchedule && isEditingSchedule) || (!isSchedule && isEditingTodo)
+      ? '수정 저장'
+      : title;
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={mode !== null}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
         <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
-          <View style={styles.modalPanel}>
+          <View style={[styles.modalPanel, styles.scheduleComposerPanel]}>
           <View style={styles.modalHeader}>
             <View style={styles.modalTitleGroup}>
               <Text style={styles.modalKicker}>{formatSelectedDate(selectedDate)}</Text>
@@ -1430,90 +1868,113 @@ function ComposerModal({
             </Pressable>
           </View>
 
-          {isSchedule ? (
-            <View style={styles.modalForm}>
-              {!isEditingCardSchedule ? (
-                <ModalInput
-                  label="일정 이름"
-                  placeholder="예: 저녁 약속"
-                  value={scheduleTitle}
-                  onChangeText={onChangeScheduleTitle}
+          <View style={styles.scheduleComposerForm}>
+            {isSchedule ? (
+              <View style={styles.modalForm}>
+                {!isEditingCardSchedule ? (
+                  <ModalInput
+                    compact
+                    label="일정 이름"
+                    placeholder="예: 저녁 약속"
+                    value={scheduleTitle}
+                    onChangeText={onChangeScheduleTitle}
+                  />
+                ) : null}
+                <CompactScheduleTimeField
+                  value={scheduleTime || createScheduleTimeForDate(selectedDate)}
+                  onChange={onChangeScheduleTime}
                 />
-              ) : null}
-              <CandidateTimeFields
-                mode="DIRECT"
-                times={[scheduleTime || createScheduleTimeForDate(selectedDate)]}
-                onChangeTime={(_, value) => onChangeScheduleTime(value)}
-                onAdd={() => undefined}
-                onRemove={() => undefined}
-              />
-              <ModalInput
-                label="장소"
-                placeholder="예: 성수 밥집"
-                value={scheduleLocation}
-                onChangeText={onChangeScheduleLocation}
-              />
-              {!isEditingCardSchedule ? (
+                <ModalInput
+                  compact
+                  label="장소"
+                  placeholder="예: 성수 밥집"
+                  value={scheduleLocation}
+                  onChangeText={onChangeScheduleLocation}
+                />
+                {!isEditingCardSchedule ? (
+                  <ColorPicker
+                    label="카드 색상"
+                    compact
+                    options={scheduleColorOptions}
+                    value={scheduleColor}
+                    onChange={onChangeScheduleColor}
+                  />
+                ) : null}
+              </View>
+            ) : (
+              <View style={styles.modalForm}>
+                <ModalInput
+                  compact
+                  label="할일"
+                  placeholder="예: 참석자에게 위치 보내기"
+                  value={todoTitle}
+                  onChangeText={onChangeTodoTitle}
+                />
+                <ModalInput
+                  compact
+                  label="메모"
+                  placeholder="예: 오늘 중"
+                  value={todoDetail}
+                  onChangeText={onChangeTodoDetail}
+                />
                 <ColorPicker
                   label="카드 색상"
-                  options={scheduleColorOptions}
-                  value={scheduleColor}
-                  onChange={onChangeScheduleColor}
+                  compact
+                  value={todoColor}
+                  onChange={onChangeTodoColor}
                 />
-              ) : null}
-            </View>
-          ) : (
-            <View style={styles.modalForm}>
-              <ModalInput
-                label="할일"
-                placeholder="예: 참석자에게 위치 보내기"
-                value={todoTitle}
-                onChangeText={onChangeTodoTitle}
-              />
-              <ModalInput
-                label="메모"
-                placeholder="예: 오늘 중"
-                value={todoDetail}
-                onChangeText={onChangeTodoDetail}
-              />
-              <ColorPicker
-                label="카드 색상"
-                value={todoColor}
-                onChange={onChangeTodoColor}
-              />
-            </View>
-          )}
+              </View>
+            )}
+          </View>
 
-          {isSchedule && isEditingSchedule && !isEditingCardSchedule ? (
+          <View style={styles.scheduleComposerFooter}>
+            {isSchedule && isEditingSchedule && !isEditingCardSchedule ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isSubmitting }}
+                disabled={isSubmitting}
+                onPress={onDeleteSchedule}
+                style={({ pressed }) => [
+                  styles.modalDeleteButton,
+                  isSubmitting && styles.disabledSubmitButton,
+                  pressed && !isSubmitting && styles.pressed,
+                ]}>
+                <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
+                <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>일정 삭제</Text>
+              </Pressable>
+            ) : null}
+
+            {!isSchedule && isEditingTodo ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isSubmitting }}
+                disabled={isSubmitting}
+                onPress={onDeleteTodo}
+                style={({ pressed }) => [
+                  styles.modalDeleteButton,
+                  isSubmitting && styles.disabledSubmitButton,
+                  pressed && !isSubmitting && styles.pressed,
+                ]}>
+                <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
+                <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>할일 삭제</Text>
+              </Pressable>
+            ) : null}
+
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ disabled: isSubmitting }}
-              disabled={isSubmitting}
-              onPress={onDeleteSchedule}
+              accessibilityState={{ disabled }}
+              disabled={disabled}
+              onPress={isSchedule ? onSubmitSchedule : onSubmitTodo}
               style={({ pressed }) => [
-                styles.modalDeleteButton,
-                isSubmitting && styles.disabledSubmitButton,
-                pressed && !isSubmitting && styles.pressed,
+                styles.modalSubmitButton,
+                disabled && styles.disabledSubmitButton,
+                pressed && !disabled && styles.pressed,
               ]}>
-              <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
-              <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>일정 삭제</Text>
+              <Text style={[styles.modalSubmitText, disabled && styles.disabledSubmitText]}>
+                {isSubmitting ? '저장 중' : submitLabel}
+              </Text>
             </Pressable>
-          ) : null}
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled }}
-            disabled={disabled}
-            onPress={isSchedule ? onSubmitSchedule : onSubmitTodo}
-            style={({ pressed }) => [
-              styles.modalSubmitButton,
-              disabled && styles.disabledSubmitButton,
-              pressed && !disabled && styles.pressed,
-            ]}>
-            <Text style={[styles.modalSubmitText, disabled && styles.disabledSubmitText]}>
-              {isSubmitting ? '저장 중' : submitLabel}
-            </Text>
-          </Pressable>
+          </View>
           </View>
         </Pressable>
       </Pressable>
@@ -1521,21 +1982,86 @@ function ComposerModal({
   );
 }
 
+function CompactScheduleTimeField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [activePicker, setActivePicker] = useState<'date' | 'time' | null>(null);
+  const pickerValue = new Date(value);
+  const resolvedPickerValue = Number.isNaN(pickerValue.getTime()) ? new Date() : pickerValue;
+
+  return (
+    <View style={styles.compactTimeShell}>
+      <View style={styles.compactTimeHeader}>
+        <View style={styles.compactTimeTitleRow}>
+          <Clock3 size={15} color={palette.primaryDeep} />
+          <Text style={styles.modalInputLabel}>언제</Text>
+        </View>
+        <View style={styles.compactTimeSummary}>
+          <CalendarDays size={15} color={palette.primaryDeep} />
+          <Text style={styles.compactTimeValue} numberOfLines={1}>
+            {formatDraftDateTimeLabel(value)}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.compactPickerControls}>
+        <CompactPickerButton label="날짜" selected={activePicker === 'date'} onPress={() => setActivePicker('date')} />
+        <CompactPickerButton label="시간" selected={activePicker === 'time'} onPress={() => setActivePicker('time')} />
+      </View>
+      {activePicker ? (
+        <DateTimePicker
+          value={resolvedPickerValue}
+          mode={activePicker}
+          display={activePicker === 'time' ? 'spinner' : 'default'}
+          accentColor={palette.primaryDeep}
+          is24Hour
+          positiveButton={{ label: '\uC120\uD0DD' }}
+          negativeButton={{ label: '\uB2EB\uAE30' }}
+          onDismiss={() => setActivePicker(null)}
+          onValueChange={(_, selectedDate) => {
+            onChange(mergeDraftDateTime(value, selectedDate, activePicker));
+
+            if (Platform.OS === 'android') {
+              setActivePicker(null);
+            }
+          }}
+          style={styles.compactNativePicker}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function CompactPickerButton({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.compactPickerButton,
+        selected && styles.selectedCompactPickerButton,
+        pressed && styles.pressed,
+      ]}>
+      <Text style={[styles.compactPickerButtonText, selected && styles.selectedCompactPickerButtonText]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function ColorPicker({
+  compact,
   label,
   options = colorOptions,
   value,
   onChange,
 }: {
+  compact?: boolean;
   label: string;
   options?: ScheduleColorOption[];
   value: ScheduleColorKey;
   onChange: (value: ScheduleColorKey) => void;
 }) {
   return (
-    <View style={styles.colorPickerShell}>
+    <View style={[styles.colorPickerShell, compact && styles.compactColorPickerShell]}>
       <Text style={styles.modalInputLabel}>{label}</Text>
-      <View style={styles.colorOptions}>
+      <View style={[styles.colorOptions, compact && styles.compactColorOptions]}>
         {options.map((option) => {
           const selected = option.key === value;
 
@@ -1548,6 +2074,7 @@ function ColorPicker({
               onPress={() => onChange(option.key)}
               style={({ pressed }) => [
                 styles.colorOption,
+                compact && styles.compactColorOption,
                 { backgroundColor: option.soft },
                 selected && styles.selectedColorOption,
                 pressed && styles.pressed,
@@ -1563,25 +2090,27 @@ function ColorPicker({
 }
 
 function ModalInput({
+  compact,
   label,
   placeholder,
   value,
   onChangeText,
 }: {
+  compact?: boolean;
   label: string;
   placeholder: string;
   value: string;
   onChangeText: (value: string) => void;
 }) {
   return (
-    <View style={styles.modalInputShell}>
+    <View style={[styles.modalInputShell, compact && styles.compactModalInputShell]}>
       <Text style={styles.modalInputLabel}>{label}</Text>
       <TextInput
         accessibilityLabel={label}
         onChangeText={onChangeText}
         placeholder={placeholder}
         placeholderTextColor={palette.inkSoft}
-        style={styles.modalInput}
+        style={[styles.modalInput, compact && styles.compactModalInput]}
         value={value}
       />
     </View>
@@ -1930,6 +2459,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 44,
   },
+  emptyAddButton: {
+    marginTop: spacing.xs,
+  },
   addButtonText: {
     color: palette.primaryDeep,
     fontSize: 14,
@@ -2151,8 +2683,13 @@ const styles = StyleSheet.create({
   todoList: {
     gap: spacing.sm,
   },
-  todoAddButton: {
+  todoActionRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
     marginTop: spacing.xs,
+  },
+  todoActionButton: {
+    flex: 1,
   },
   todoRow: {
     alignItems: 'center',
@@ -2178,6 +2715,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 30,
   },
+  todoCheckButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   checkedBox: {
     backgroundColor: palette.lime,
   },
@@ -2185,6 +2726,24 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 3,
     minWidth: 0,
+  },
+  todoEditButton: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: 4,
+    height: 34,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    width: 66,
+  },
+  todoEditButtonText: {
+    color: palette.primaryDeep,
+    fontSize: 11,
+    fontWeight: '900',
   },
   todoTitle: {
     color: palette.ink,
@@ -2238,6 +2797,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.md,
   },
+  modalBackdropTouchable: {
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
   modalPressGuard: {
     alignItems: 'center',
     width: '100%',
@@ -2248,8 +2814,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     borderWidth: 2,
     gap: spacing.md,
+    maxHeight: '88%',
     maxWidth: 390,
+    overflow: 'hidden',
     padding: spacing.md,
+    width: '100%',
+  },
+  scheduleComposerPanel: {
+    gap: spacing.sm,
+    maxHeight: '82%',
+    padding: spacing.sm,
+  },
+  scheduleComposerForm: {
+    width: '100%',
+  },
+  scheduleComposerFooter: {
+    gap: spacing.xs,
     width: '100%',
   },
   dialogPanel: {
@@ -2322,7 +2902,7 @@ const styles = StyleSheet.create({
   modalHeader: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.sm,
     justifyContent: 'space-between',
   },
   modalTitleGroup: {
@@ -2346,12 +2926,214 @@ const styles = StyleSheet.create({
     borderColor: palette.lineStrong,
     borderRadius: radius.md,
     borderWidth: 1.5,
-    height: 40,
+    height: 38,
     justifyContent: 'center',
-    width: 40,
+    width: 38,
   },
   modalForm: {
+    gap: spacing.xs,
+  },
+  recurringTodoKeyboardAvoider: {
+    flex: 1,
+  },
+  recurringTodoPressGuard: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    width: '100%',
+  },
+  recurringTodoPanel: {
+    height: '62%',
+    maxHeight: '86%',
+    overflow: 'hidden',
+  },
+  recurringTodoFormPanel: {
     gap: spacing.sm,
+    height: '86%',
+    padding: spacing.sm,
+  },
+  recurringTodoScroll: {
+    flex: 1,
+    flexShrink: 1,
+    width: '100%',
+  },
+  recurringTodoScrollContent: {
+    flexGrow: 1,
+    gap: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  recurringTodoFooter: {
+    width: '100%',
+  },
+  recurringTodoFormBody: {
+    flex: 1,
+    justifyContent: 'center',
+    width: '100%',
+  },
+  recurringTodoList: {
+    gap: spacing.sm,
+  },
+  recurringTodoRow: {
+    alignItems: 'center',
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 64,
+    padding: spacing.sm,
+  },
+  recurringTodoCopy: {
+    flex: 1,
+    gap: 3,
+    minWidth: 0,
+  },
+  recurringTodoTitle: {
+    color: palette.ink,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  recurringTodoMeta: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
+  },
+  recurringTodoDeleteButton: {
+    alignItems: 'center',
+    backgroundColor: palette.coralSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 34,
+    paddingHorizontal: 8,
+  },
+  recurringTodoDeleteText: {
+    color: palette.primaryDeep,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  recurringTodoEmptyText: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    color: palette.inkMuted,
+    fontSize: 13,
+    fontWeight: '900',
+    lineHeight: 19,
+    padding: spacing.sm,
+  },
+  recurringTodoForm: {
+    gap: spacing.xs,
+    width: '100%',
+  },
+  compactTimeShell: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  compactTimeHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  compactTimeTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    minWidth: 50,
+  },
+  compactTimeSummary: {
+    alignItems: 'center',
+    backgroundColor: palette.limeSoft,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flex: 1,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 34,
+    minWidth: 0,
+    paddingHorizontal: spacing.xs,
+  },
+  compactTimeValue: {
+    color: palette.ink,
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  compactPickerControls: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  compactPickerButton: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.sm,
+    borderWidth: 1.5,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 34,
+  },
+  selectedCompactPickerButton: {
+    backgroundColor: palette.primary,
+  },
+  compactPickerButtonText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  selectedCompactPickerButtonText: {
+    color: palette.onLight,
+  },
+  compactNativePicker: {
+    alignSelf: 'stretch',
+  },
+  weekdayPickerShell: {
+    backgroundColor: palette.paper,
+    borderColor: palette.lineStrong,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  recurringWeekdayRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  recurringWeekdayButton: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderColor: palette.line,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    height: 34,
+    justifyContent: 'center',
+    width: 38,
+  },
+  selectedRecurringWeekdayButton: {
+    backgroundColor: palette.primary,
+    borderColor: palette.lineStrong,
+    borderWidth: 2,
+  },
+  recurringWeekdayText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  selectedRecurringWeekdayText: {
+    color: palette.onLight,
   },
   modalInputShell: {
     backgroundColor: palette.paper,
@@ -2361,6 +3143,11 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  compactModalInputShell: {
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   modalInputLabel: {
     color: palette.inkMuted,
@@ -2374,6 +3161,10 @@ const styles = StyleSheet.create({
     minHeight: 34,
     padding: 0,
   },
+  compactModalInput: {
+    fontSize: 15,
+    minHeight: 28,
+  },
   colorPickerShell: {
     backgroundColor: palette.paper,
     borderColor: palette.lineStrong,
@@ -2383,10 +3174,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  compactColorPickerShell: {
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
   colorOptions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
+  },
+  compactColorOptions: {
+    gap: 6,
   },
   colorOption: {
     alignItems: 'center',
@@ -2397,6 +3196,10 @@ const styles = StyleSheet.create({
     gap: 6,
     minHeight: 34,
     paddingHorizontal: spacing.sm,
+  },
+  compactColorOption: {
+    minHeight: 30,
+    paddingHorizontal: spacing.xs,
   },
   selectedColorOption: {
     borderColor: palette.primaryDeep,

@@ -1,5 +1,4 @@
-import { getCandidateEndsAt } from '@/lib/cardMenu';
-import { formatSelectedDate } from '@/lib/scheduleCalendar';
+import { buildScheduleLabels, getCandidateEndsAt } from '@/lib/cardMenu';
 import type {
   CreateManualScheduleInput,
   CreateTodoInput,
@@ -38,31 +37,13 @@ const fallbackTodos: TodoItem[] = [
 let manualScheduleItems: DisplayScheduleItem[] = [];
 let todos = fallbackTodos;
 
-function padTwo(value: number) {
-  return String(value).padStart(2, '0');
-}
-
-function formatScheduleTimeLabel(startsAt: string, endsAt: string) {
-  const start = new Date(startsAt);
-  const end = new Date(endsAt);
-
-  if (Number.isNaN(start.getTime())) {
-    return '시간 미정';
-  }
-
-  if (Number.isNaN(end.getTime())) {
-    return `${padTwo(start.getHours())}:${padTwo(start.getMinutes())}`;
-  }
-
-  return `${padTwo(start.getHours())}:${padTwo(start.getMinutes())} - ${padTwo(end.getHours())}:${padTwo(
-    end.getMinutes(),
-  )}`;
-}
-
 function mapManualSchedule(input: CreateManualScheduleInput, id = `local-schedule-${Date.now()}`): DisplayScheduleItem {
   const startsAt = input.startsAt;
   const endsAt = input.endsAt || getCandidateEndsAt(startsAt);
-  const startsAtDate = new Date(startsAt);
+  const scheduleLabels = buildScheduleLabels(startsAt, endsAt) ?? {
+    dateLabel: '날짜 미정',
+    timeLabel: '시간 미정',
+  };
 
   return {
     id,
@@ -70,8 +51,8 @@ function mapManualSchedule(input: CreateManualScheduleInput, id = `local-schedul
     title: input.title.trim(),
     startsAt,
     endsAt,
-    dateLabel: Number.isNaN(startsAtDate.getTime()) ? '날짜 미정' : formatSelectedDate(startsAtDate),
-    timeLabel: formatScheduleTimeLabel(startsAt, endsAt),
+    dateLabel: scheduleLabels.dateLabel,
+    timeLabel: scheduleLabels.timeLabel,
     location: input.location.trim() || '장소 미정',
     status: 'READY',
     source: 'MANUAL',
@@ -128,6 +109,37 @@ export const mockScheduleRepository: SchedulePlannerRepository = {
     };
     todos = [todo, ...todos];
     return todo;
+  },
+  async updateTodo(todoId, input) {
+    let updatedTodo: TodoItem | undefined;
+    todos = todos.map((todo) => {
+      if (todo.id !== todoId) {
+        return todo;
+      }
+
+      updatedTodo = {
+        ...todo,
+        dateKey: input.dateKey,
+        title: input.title.trim(),
+        detail: input.detail.trim() || '오늘 중',
+        colorKey: input.colorKey,
+      };
+      return updatedTodo;
+    });
+
+    if (!updatedTodo) {
+      throw new Error('할일을 찾지 못했어요.');
+    }
+
+    return updatedTodo;
+  },
+  async deleteTodo(todoId) {
+    const previousLength = todos.length;
+    todos = todos.filter((todo) => todo.id !== todoId);
+
+    if (todos.length === previousLength) {
+      throw new Error('할일을 찾지 못했어요.');
+    }
   },
   async toggleTodo(todoId) {
     let toggledTodo: TodoItem | undefined;

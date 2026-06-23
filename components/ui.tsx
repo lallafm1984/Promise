@@ -8,6 +8,7 @@ import {
   StyleProp,
   StyleSheet,
   Text,
+  TextStyle,
   useWindowDimensions,
   View,
   ViewStyle,
@@ -36,6 +37,9 @@ interface ButtonProps {
   icon?: ReactNode;
   variant?: ButtonVariant;
   fullWidth?: boolean;
+  singleLineLabel?: boolean;
+  style?: StyleProp<ViewStyle>;
+  labelStyle?: StyleProp<TextStyle>;
   disabled?: boolean;
   onPress?: () => void;
 }
@@ -158,6 +162,9 @@ export function ActionButton({
   icon,
   variant = 'primary',
   fullWidth,
+  singleLineLabel,
+  style,
+  labelStyle,
   disabled,
   onPress,
 }: ButtonProps) {
@@ -173,9 +180,14 @@ export function ActionButton({
         fullWidth && styles.fullWidth,
         disabled && styles.disabledButton,
         pressed && !disabled && styles.pressed,
+        style,
       ]}>
       {icon}
-      <Text style={[styles.buttonLabel, styles[`${variant}ButtonLabel`], disabled && styles.disabledLabel]}>
+      <Text
+        adjustsFontSizeToFit={singleLineLabel}
+        minimumFontScale={0.84}
+        numberOfLines={singleLineLabel ? 1 : undefined}
+        style={[styles.buttonLabel, styles[`${variant}ButtonLabel`], labelStyle, disabled && styles.disabledLabel]}>
         {label}
       </Text>
     </Pressable>

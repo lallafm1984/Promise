@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CreateManualScheduleInput, DisplayScheduleItem } from '@/types/promise';
+import type { CreateManualScheduleInput, DisplayScheduleItem, RecurringTodoItem, TodoItem } from '@/types/promise';
 import {
   applyManualScheduleMutations,
+  buildRecurringTodoForDate,
   buildSchedulePlannerCache,
+  createLocalRecurringTodoItem,
   createLocalManualScheduleItem,
   enqueueSchedulePlannerMutation,
+  getTodosForDate,
   parseSchedulePlannerCache,
   type SchedulePlannerMutation,
 } from './schedulePlannerState';
@@ -25,10 +28,27 @@ const serverSchedule: DisplayScheduleItem = {
   startsAt: '2026-06-20T12:00:00.000Z',
   endsAt: '2026-06-20T13:00:00.000Z',
   dateLabel: '6월 20일',
-  timeLabel: '21:00 - 22:00',
+  timeLabel: '21:00',
   location: '강남',
   status: 'READY',
   source: 'MANUAL',
+  colorKey: 'mint',
+};
+
+const serverTodo: TodoItem = {
+  id: 'todo-server',
+  dateKey: '2026-06-22',
+  title: '일반 할일',
+  detail: '오늘 중',
+  done: false,
+  colorKey: 'coral',
+};
+
+const recurringTodo: RecurringTodoItem = {
+  id: 'recurring-1',
+  title: '운동',
+  detail: '30분',
+  weekdays: [1, 3, 5],
   colorKey: 'mint',
 };
 
@@ -44,6 +64,8 @@ describe('schedule planner state', () => {
     const cache = buildSchedulePlannerCache({
       manualScheduleItems: [serverSchedule],
       todos: [],
+      recurringTodos: [recurringTodo],
+      recurringTodoCompletions: [{ recurringTodoId: recurringTodo.id, dateKey: '2026-06-22', done: true }],
       pendingMutations: [mutation],
       persisted: false,
       syncedAt: null,
@@ -52,11 +74,78 @@ describe('schedule planner state', () => {
     expect(parseSchedulePlannerCache(cache)).toEqual({
       manualScheduleItems: [serverSchedule],
       todos: [],
+      recurringTodos: [recurringTodo],
+      recurringTodoCompletions: [{ recurringTodoId: recurringTodo.id, dateKey: '2026-06-22', done: true }],
       pendingMutations: [mutation],
       persisted: false,
       syncedAt: null,
     });
     expect(parseSchedulePlannerCache('bad')).toBeNull();
+  });
+
+  it('creates recurring todo templates from user input', () => {
+    expect(
+      createLocalRecurringTodoItem(
+        {
+          title: '  물 마시기  ',
+          detail: '',
+          weekdays: [3, 1, 1, 8],
+          colorKey: 'lime',
+        },
+        'recurring-local',
+      ),
+    ).toEqual({
+      id: 'recurring-local',
+      title: '물 마시기',
+      detail: '오늘 중',
+      weekdays: [1, 3],
+      colorKey: 'lime',
+    });
+  });
+
+  it('shows recurring todos only on selected weekdays and keeps completion per date', () => {
+    expect(buildRecurringTodoForDate(recurringTodo, '2026-06-22', [])).toMatchObject({
+      id: 'recurring-recurring-1-2026-06-22',
+      recurringTodoId: recurringTodo.id,
+      dateKey: '2026-06-22',
+      done: false,
+      source: 'RECURRING',
+    });
+    expect(buildRecurringTodoForDate(recurringTodo, '2026-06-23', [])).toBeNull();
+
+    expect(
+      getTodosForDate(
+        [serverTodo],
+        [recurringTodo],
+        [{ recurringTodoId: recurringTodo.id, dateKey: '2026-06-22', done: true }],
+        '2026-06-22',
+      ),
+    ).toEqual([
+      serverTodo,
+      expect.objectContaining({
+        recurringTodoId: recurringTodo.id,
+        dateKey: '2026-06-22',
+        done: true,
+        source: 'RECURRING',
+      }),
+    ]);
+  });
+
+  it('keeps todo order stable when a todo is completed', () => {
+    const completedTodo: TodoItem = {
+      ...serverTodo,
+      id: 'todo-completed',
+      title: '먼저 있던 할일',
+      done: true,
+    };
+    const openTodo: TodoItem = {
+      ...serverTodo,
+      id: 'todo-open',
+      title: '나중에 있던 할일',
+      done: false,
+    };
+
+    expect(getTodosForDate([completedTodo, openTodo], [], [], '2026-06-22')).toEqual([completedTodo, openTodo]);
   });
 
   it('creates a local schedule item from user input', () => {
@@ -65,8 +154,26 @@ describe('schedule planner state', () => {
       cardId: 'local-schedule-1',
       title: '성수 카페',
       location: '성수',
+      dateLabel: '6월 20일',
+      timeLabel: '19:00',
       source: 'MANUAL',
       colorKey: 'sky',
+    });
+  });
+
+  it('keeps server UTC schedule times in the app schedule timezone without showing the end time', () => {
+    expect(
+      createLocalManualScheduleItem(
+        {
+          ...scheduleInput,
+          startsAt: '2026-06-24T10:00:00',
+          endsAt: '2026-06-24T11:00:00',
+        },
+        'local-schedule-utc',
+      ),
+    ).toMatchObject({
+      dateLabel: '6월 24일',
+      timeLabel: '19:00',
     });
   });
 

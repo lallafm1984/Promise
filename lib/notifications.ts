@@ -1,12 +1,20 @@
 import type { AppFriend, FriendRequest } from '@/lib/friends';
-import type { ReceivedCardAlert, ReminderLead, ScheduleItem } from '@/types/promise';
+import { getConfirmedCardSchedulePath } from '@/lib/managedCards';
+import type { PromiseCard, ReceivedCardAlert, ReminderLead, ScheduleItem } from '@/types/promise';
 
 export interface NotificationContent {
   title: string;
   body: string;
   data: {
     url: string;
-    type: 'friend_request' | 'friend_accepted' | 'card_received' | 'appointment_reminder' | 'test_notification';
+    type:
+      | 'friend_request'
+      | 'friend_accepted'
+      | 'card_received'
+      | 'card_response_received'
+      | 'card_confirmed'
+      | 'appointment_reminder'
+      | 'test_notification';
     id: string;
   };
 }
@@ -99,6 +107,35 @@ export function buildCardReceivedNotification(alert: ReceivedCardAlert): Notific
     title: '친구가 카드를 보냈어요',
     body: `${alert.requesterName}님이 ${alert.location} 약속 카드를 보냈어요.`,
     data: { url: '/manage', type: 'card_received', id: alert.id },
+  };
+}
+
+export function buildCardResponseReceivedNotification(card: PromiseCard): NotificationContent {
+  const respondent = card.participants.find((participant) => {
+    const choice = participant.choice ?? 'UNANSWERED';
+    return choice !== 'UNANSWERED' || (participant.responses?.length ?? 0) > 0;
+  });
+  const respondentName = respondent?.displayName?.trim() || respondent?.name?.trim() || '친구';
+
+  return {
+    title: '응답이 도착했어요',
+    body: `${respondentName}님이 ${card.location} 카드에 응답했어요.`,
+    data: { url: '/manage?tab=SENT_HAS_RESPONSE', type: 'card_response_received', id: card.id },
+  };
+}
+
+function getConfirmedRequesterLabel(card: PromiseCard) {
+  const requesterName = (card.requesterName ?? card.hostName).trim() || '친구';
+  return requesterName.endsWith('님') ? requesterName : `${requesterName}님`;
+}
+
+export function buildCardConfirmedNotification(card: PromiseCard): NotificationContent {
+  const requesterLabel = getConfirmedRequesterLabel(card);
+
+  return {
+    title: '약속이 확정되었습니다',
+    body: `${requesterLabel}이 약속을 확정하였습니다. 일정에 추가됩니다.`,
+    data: { url: getConfirmedCardSchedulePath(card), type: 'card_confirmed', id: card.id },
   };
 }
 

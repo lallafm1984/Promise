@@ -7,14 +7,18 @@ import {
   type ProfileRow,
 } from '@/data/supabaseProfile';
 import {
+  buildCardScheduleTitle,
+  buildScheduleLabels,
   buildScheduleItemFromConfirmedCard,
   formatDraftDateTimeLabel,
   formatDraftDateTimeShortLabel,
   getCardExpiresAt,
   getCandidateEndsAt,
+  getScheduleParticipantsForViewer,
   mergeManagedCards,
 } from '@/lib/cardMenu';
 import { getRecentReceivedCardStatuses } from '@/lib/managedCards';
+import { createReceivedCardResponseUnavailableError } from '@/lib/responseErrors';
 import { supabase } from '@/lib/supabase';
 import type {
   AppointmentMode,
@@ -85,6 +89,7 @@ interface AppointmentIdRow {
 
 interface CardRecipientRow {
   card_id: string;
+  recipient_profile_id?: string | null;
 }
 
 interface MobileSyncSnapshotRow {
@@ -165,6 +170,48 @@ function getParticipantColor(index: number) {
   return colors[index % colors.length];
 }
 
+function getParticipantLabel(displayName: string) {
+  return displayName.trim().slice(0, 1) || '?';
+}
+
+function getParticipantDisplayName(profile: Pick<ProfileRow, 'handle' | 'display_name'>) {
+  return profile.display_name.trim() || profile.handle.trim() || 'Friend';
+}
+
+function buildInvitedParticipant(
+  profile: Pick<ProfileRow, 'id' | 'handle' | 'display_name'>,
+  candidates: AppointmentCandidateRow[],
+  index: number,
+): Participant {
+  const displayName = getParticipantDisplayName(profile);
+
+  return {
+    id: profile.id,
+    name: getParticipantLabel(displayName),
+    displayName,
+    color: getParticipantColor(index),
+    choice: 'UNANSWERED',
+    responses: candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      choice: 'UNANSWERED',
+    })),
+  };
+}
+
+function mergeParticipantResponse(invitedParticipant: Participant, responseParticipant: Participant | undefined) {
+  if (!responseParticipant) {
+    return invitedParticipant;
+  }
+
+  return {
+    ...responseParticipant,
+    name: responseParticipant.name || invitedParticipant.name,
+    displayName: responseParticipant.displayName || invitedParticipant.displayName,
+    color: invitedParticipant.color,
+    responses: responseParticipant.responses ?? invitedParticipant.responses,
+  };
+}
+
 function getUniqueRecipientProfileIds(card: PromiseCard, ownerId: string) {
   return Array.from(new Set(card.recipientProfileIds ?? [])).filter((profileId) => profileId !== ownerId);
 }
@@ -198,28 +245,75 @@ function cleanRespondToReceivedCardInput(input: RespondToReceivedCardInput): Res
   };
 }
 
+function hasSameResponseCandidateSet(currentCandidateIds: string[], responseCandidateIds: string[]) {
+  if (currentCandidateIds.length !== responseCandidateIds.length) {
+    return false;
+  }
+
+  const currentCandidateIdSet = new Set(currentCandidateIds);
+  return responseCandidateIds.every((candidateId) => currentCandidateIdSet.has(candidateId));
+}
+
+function isLikelyStaleReceivedCardMutationError(error: unknown) {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+
+  const { code, message } = error as { code?: string; message?: string };
+  const lowerMessage = message?.toLowerCase() ?? '';
+
+  return (
+    code === '23503' ||
+    code === '42501' ||
+    lowerMessage.includes('foreign key') ||
+    lowerMessage.includes('row-level security') ||
+    lowerMessage.includes('appointment_candidate_responses') ||
+    lowerMessage.includes('appointment_respondents')
+  );
+}
+
 function mapCard(
   card: AppointmentCardRow,
   profile: ProfileRow,
   candidates: AppointmentCandidateRow[],
   respondents: AppointmentRespondentRow[],
   responses: CandidateResponseRow[],
+  recipients: CardRecipientRow[] = [],
+  profilesById: Map<string, ProfileRow> = new Map(),
 ): PromiseCard {
   const cardCandidates = candidates
     .filter((candidate) => candidate.card_id === card.id)
     .sort((left, right) => left.sort_order - right.sort_order);
   const cardRespondents = respondents.filter((respondent) => respondent.card_id === card.id);
-  const participants: Participant[] = cardRespondents.map((respondent, index) => {
+  const cardRecipients = recipients.filter(
+    (recipient): recipient is CardRecipientRow & { recipient_profile_id: string } =>
+      recipient.card_id === card.id && Boolean(recipient.recipient_profile_id),
+  );
+  const invitedParticipants = cardRecipients.map((recipient, index) => {
+    const recipientProfile = profilesById.get(recipient.recipient_profile_id) ?? {
+      id: recipient.recipient_profile_id,
+      handle: 'unknown',
+      display_name: 'Friend',
+      avatar_url: null,
+      timezone: 'Asia/Seoul',
+    };
+
+    return buildInvitedParticipant(recipientProfile, cardCandidates, index);
+  });
+  const invitedParticipantById = new Map(invitedParticipants.map((participant) => [participant.id, participant]));
+  const responseParticipants: Participant[] = cardRespondents.map((respondent, index) => {
     const respondentResponses = responses.filter((response) => response.respondent_id === respondent.id);
     const displayName = respondent.display_name.trim() || '친구';
     const comment = respondent.comment.trim();
+    const participantId = respondent.profile_id ?? respondent.id;
+    const invitedParticipant = invitedParticipantById.get(participantId);
 
     return {
-      id: respondent.profile_id ?? respondent.id,
+      id: participantId,
       name: displayName.slice(0, 1),
       displayName,
       comment,
-      color: getParticipantColor(index),
+      color: invitedParticipant?.color ?? getParticipantColor(invitedParticipants.length + index),
       choice: chooseParticipantChoice(respondentResponses),
       responses: cardCandidates.map((candidate) => {
         const response = respondentResponses.find((currentResponse) => currentResponse.candidate_id === candidate.id);
@@ -231,6 +325,11 @@ function mapCard(
       }),
     };
   });
+  const responseParticipantById = new Map(responseParticipants.map((participant) => [participant.id, participant]));
+  const participants = [
+    ...invitedParticipants.map((participant) => mergeParticipantResponse(participant, responseParticipantById.get(participant.id))),
+    ...responseParticipants.filter((participant) => !invitedParticipantById.has(participant.id)),
+  ];
 
   return {
     id: card.id,
@@ -294,17 +393,21 @@ async function mapCardsWithDetails(cards: AppointmentCardRow[], profilesById: Ma
     return [];
   }
 
-  const [{ data: candidatesData, error: candidatesError }, { data: respondentsData, error: respondentsError }] =
-    await Promise.all([
-      client
-        .from('appointment_candidates')
-        .select('id, card_id, starts_at, ends_at, label, short_label, sort_order')
-        .in('card_id', cardIds),
-      client
-        .from('appointment_respondents')
-        .select('id, card_id, profile_id, display_name, comment')
-        .in('card_id', cardIds),
-    ]);
+  const [
+    { data: candidatesData, error: candidatesError },
+    { data: respondentsData, error: respondentsError },
+    { data: recipientsData, error: recipientsError },
+  ] = await Promise.all([
+    client
+      .from('appointment_candidates')
+      .select('id, card_id, starts_at, ends_at, label, short_label, sort_order')
+      .in('card_id', cardIds),
+    client
+      .from('appointment_respondents')
+      .select('id, card_id, profile_id, display_name, comment')
+      .in('card_id', cardIds),
+    client.from('card_recipients').select('card_id, recipient_profile_id').in('card_id', cardIds),
+  ]);
 
   if (candidatesError) {
     throw candidatesError;
@@ -314,8 +417,24 @@ async function mapCardsWithDetails(cards: AppointmentCardRow[], profilesById: Ma
     throw respondentsError;
   }
 
+  if (recipientsError) {
+    throw recipientsError;
+  }
+
   const candidates = (candidatesData ?? []) as AppointmentCandidateRow[];
   const respondents = (respondentsData ?? []) as AppointmentRespondentRow[];
+  const recipients = (recipientsData ?? []) as CardRecipientRow[];
+  const recipientProfileIds = recipients
+    .map((recipient) => recipient.recipient_profile_id)
+    .filter((profileId): profileId is string => Boolean(profileId));
+  const respondentProfileIds = respondents
+    .map((respondent) => respondent.profile_id)
+    .filter((profileId): profileId is string => Boolean(profileId));
+  const participantProfileIds = Array.from(new Set([...recipientProfileIds, ...respondentProfileIds]));
+  const participantProfilesById = await getProfilesById(participantProfileIds);
+  participantProfilesById.forEach((profile, profileId) => {
+    profilesById.set(profileId, profile);
+  });
   const respondentIds = respondents.map((respondent) => respondent.id);
   const responses =
     respondentIds.length === 0
@@ -334,7 +453,7 @@ async function mapCardsWithDetails(cards: AppointmentCardRow[], profilesById: Ma
       timezone: 'Asia/Seoul',
     };
 
-    return mapCard(card, profile, candidates, respondents, responses);
+    return mapCard(card, profile, candidates, respondents, responses, recipients, profilesById);
   });
 }
 
@@ -455,18 +574,6 @@ async function listCardsByRecipient(statuses?: AppointmentStatus[]) {
   }));
 }
 
-function formatScheduleDateLabel(value: string) {
-  const date = new Date(value);
-  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
-}
-
-function formatScheduleTimeLabel(startsAt: string, endsAt: string) {
-  const start = new Date(startsAt);
-  const end = new Date(endsAt);
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${pad(start.getHours())}:${pad(start.getMinutes())} - ${pad(end.getHours())}:${pad(end.getMinutes())}`;
-}
-
 export const supabasePromiseRepository: PromiseRepository = {
   async getHostProfile() {
     const user = await getAuthenticatedUser();
@@ -500,29 +607,34 @@ export const supabasePromiseRepository: PromiseRepository = {
       throw error;
     }
 
+    const currentProfile = { id: user.id, displayName: '' };
     const ownedConfirmedCardById = new Map(ownedConfirmedCards.map((card) => [card.id, card]));
     const ownerScheduleItems = ((data ?? []) as AppointmentRow[]).map<ScheduleItem>((appointment) => {
       const cardId = appointment.card_id ?? appointment.id;
       const card = ownedConfirmedCardById.get(cardId);
+      const scheduleLabels = buildScheduleLabels(appointment.starts_at, appointment.ends_at) ?? {
+        dateLabel: '',
+        timeLabel: '',
+      };
 
       return {
         id: appointment.id,
         cardId,
-        title: appointment.title,
+        title: buildCardScheduleTitle(appointment.location),
         startsAt: appointment.starts_at,
         endsAt: appointment.ends_at,
-        dateLabel: formatScheduleDateLabel(appointment.starts_at),
-        timeLabel: formatScheduleTimeLabel(appointment.starts_at, appointment.ends_at),
+        dateLabel: scheduleLabels.dateLabel,
+        timeLabel: scheduleLabels.timeLabel,
         location: appointment.location,
         status: 'REMINDER_ON',
         selectedSlotId: card?.selectedSlotId,
         candidates: card?.candidates.map((candidate) => ({ ...candidate })) ?? [],
-        participants: card?.participants.map((participant) => ({ ...participant })) ?? [],
+        participants: getScheduleParticipantsForViewer(card?.participants ?? [], currentProfile),
       };
     });
     const ownerCardIds = new Set(ownerScheduleItems.map((item) => item.cardId));
     const receivedScheduleItems = receivedConfirmedCards
-      .map((card) => buildScheduleItemFromConfirmedCard(card))
+      .map((card) => buildScheduleItemFromConfirmedCard(card, currentProfile))
       .filter((item): item is ScheduleItem => Boolean(item))
       .filter((item) => !ownerCardIds.has(item.cardId));
 
@@ -930,7 +1042,47 @@ export const supabasePromiseRepository: PromiseRepository = {
     }
 
     if (!recipientData) {
-      throw new Error('응답할 카드를 찾지 못했어요.');
+      throw createReceivedCardResponseUnavailableError('deleted');
+    }
+
+    const { data: cardStatusData, error: cardStatusError } = await client
+      .from('appointment_cards')
+      .select('id, status, expires_at')
+      .eq('id', cleanInput.cardId)
+      .maybeSingle();
+
+    if (cardStatusError) {
+      throw cardStatusError;
+    }
+
+    if (!cardStatusData) {
+      throw createReceivedCardResponseUnavailableError('deleted');
+    }
+
+    if (!['PENDING', 'VOTING'].includes(cardStatusData.status)) {
+      throw createReceivedCardResponseUnavailableError('closed');
+    }
+
+    if (new Date(cardStatusData.expires_at).getTime() <= Date.now()) {
+      throw createReceivedCardResponseUnavailableError('expired');
+    }
+
+    const { data: currentCandidates, error: currentCandidatesError } = await client
+      .from('appointment_candidates')
+      .select('id')
+      .eq('card_id', cleanInput.cardId);
+
+    if (currentCandidatesError) {
+      throw currentCandidatesError;
+    }
+
+    if (
+      !hasSameResponseCandidateSet(
+        ((currentCandidates ?? []) as Array<{ id: string }>).map((candidate) => candidate.id),
+        cleanInput.responses.map((response) => response.candidateId),
+      )
+    ) {
+      throw createReceivedCardResponseUnavailableError('changed');
     }
 
     const { data: existingRespondent, error: existingRespondentError } = await client
@@ -958,6 +1110,10 @@ export const supabasePromiseRepository: PromiseRepository = {
         .eq('profile_id', user.id);
 
       if (updateRespondentError) {
+        if (isLikelyStaleReceivedCardMutationError(updateRespondentError)) {
+          throw createReceivedCardResponseUnavailableError('mutation-stale');
+        }
+
         throw updateRespondentError;
       }
     } else {
@@ -973,6 +1129,10 @@ export const supabasePromiseRepository: PromiseRepository = {
         .single();
 
       if (insertRespondentError) {
+        if (isLikelyStaleReceivedCardMutationError(insertRespondentError)) {
+          throw createReceivedCardResponseUnavailableError('mutation-stale');
+        }
+
         throw insertRespondentError;
       }
 
@@ -989,6 +1149,10 @@ export const supabasePromiseRepository: PromiseRepository = {
     );
 
     if (responseError) {
+      if (isLikelyStaleReceivedCardMutationError(responseError)) {
+        throw createReceivedCardResponseUnavailableError('mutation-stale');
+      }
+
       throw responseError;
     }
 
@@ -999,6 +1163,10 @@ export const supabasePromiseRepository: PromiseRepository = {
       .eq('recipient_profile_id', user.id);
 
     if (deliveryError) {
+      if (isLikelyStaleReceivedCardMutationError(deliveryError)) {
+        throw createReceivedCardResponseUnavailableError('mutation-stale');
+      }
+
       throw deliveryError;
     }
 
@@ -1006,7 +1174,7 @@ export const supabasePromiseRepository: PromiseRepository = {
     const respondedCard = receivedCards.find((card) => card.id === cleanInput.cardId);
 
     if (!respondedCard) {
-      throw new Error('응답한 카드를 다시 불러오지 못했어요.');
+      throw createReceivedCardResponseUnavailableError('mutation-stale');
     }
 
     return respondedCard;

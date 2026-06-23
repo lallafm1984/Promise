@@ -18,6 +18,11 @@ export interface CardDraft {
 
 export type DraftValidationResult = { valid: true } | { valid: false; error: string };
 
+export interface ScheduleLabels {
+  dateLabel: string;
+  timeLabel: string;
+}
+
 export type ManagedStatusGroup = 'PENDING' | 'VOTING' | 'DECLINED' | 'CONFIRMED' | 'PAST';
 
 export type ManagedCardActionKind = 'RESHARE' | 'RESULTS' | 'SCHEDULE' | 'RECREATE' | 'OPEN_RECEIVED';
@@ -80,11 +85,14 @@ export function getModeLabel(mode: AppointmentMode): string {
 const DEFAULT_MEETING_HOUR = 19;
 const DEFAULT_MEETING_MINUTE = 0;
 const MEETING_DURATION_MINUTES = 60;
+export const APP_SCHEDULE_TIME_ZONE = 'Asia/Seoul';
 export const MAX_CARD_CANDIDATE_TIMES = 5;
 export const CARD_RESPONSE_WINDOW_DAYS = 3;
 export const CARD_RESPONSE_WINDOW_NOTICE = '카드는 3일 동안 응답을 받을 수 있어요.';
 export const DUPLICATE_DRAFT_TIME_ERROR = '후보 시간을 서로 다르게 입력해 주세요.';
 export const PAST_DRAFT_TIME_ERROR = '지난 시간으로는 카드를 만들 수 없어요. 지금 이후의 날짜와 시간을 선택해 주세요.';
+const APP_SCHEDULE_TIME_ZONE_OFFSET_MS = 9 * 60 * 60 * 1000;
+const UTC_DATETIME_WITHOUT_ZONE_PATTERN = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
 
 function padTwo(value: number): string {
   return String(value).padStart(2, '0');
@@ -97,17 +105,48 @@ export function getCardExpiresAt(createdAt: string, responseWindowDays = CARD_RE
   return new Date(baseDate.getTime() + responseWindowDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function normalizeDateTimeValue(value: string): string {
+  const trimmedValue = value.trim();
+
+  if (UTC_DATETIME_WITHOUT_ZONE_PATTERN.test(trimmedValue)) {
+    return `${trimmedValue.replace(' ', 'T')}Z`;
+  }
+
+  return trimmedValue;
+}
+
 function parseDraftDateTime(value: string): Date | null {
-  const date = new Date(value);
+  const date = new Date(normalizeDateTimeValue(value));
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function getAppScheduleDateParts(date: Date) {
+  const scheduleDate = new Date(date.getTime() + APP_SCHEDULE_TIME_ZONE_OFFSET_MS);
+
+  return {
+    year: scheduleDate.getUTCFullYear(),
+    month: scheduleDate.getUTCMonth() + 1,
+    day: scheduleDate.getUTCDate(),
+    hours: scheduleDate.getUTCHours(),
+    minutes: scheduleDate.getUTCMinutes(),
+  };
+}
+
+function createAppScheduleDate(year: number, month: number, day: number, hours: number, minutes: number): Date {
+  return new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0) - APP_SCHEDULE_TIME_ZONE_OFFSET_MS);
+}
+
 export function createDefaultDraftTime(slotIndex = 0, baseDate = new Date()): string {
-  const date = new Date(baseDate);
+  const baseParts = getAppScheduleDateParts(baseDate);
   const candidateHour = DEFAULT_MEETING_HOUR + slotIndex;
-  date.setDate(date.getDate() + 1 + Math.floor(candidateHour / 24));
-  date.setHours(candidateHour % 24, DEFAULT_MEETING_MINUTE, 0, 0);
-  return date.toISOString();
+
+  return createAppScheduleDate(
+    baseParts.year,
+    baseParts.month,
+    baseParts.day + 1 + Math.floor(candidateHour / 24),
+    candidateHour % 24,
+    DEFAULT_MEETING_MINUTE,
+  ).toISOString();
 }
 
 export function createDefaultDraftTimes(count = 2, baseDate = new Date()): string[] {
@@ -168,7 +207,9 @@ export function formatDraftDateTimeLabel(value: string): string {
     return '';
   }
 
-  return `${date.getMonth() + 1}월 ${date.getDate()}일 ${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+  const parts = getAppScheduleDateParts(date);
+
+  return `${parts.month}월 ${parts.day}일 ${padTwo(parts.hours)}:${padTwo(parts.minutes)}`;
 }
 
 export function formatDraftDateTimeShortLabel(value: string): string {
@@ -178,7 +219,9 @@ export function formatDraftDateTimeShortLabel(value: string): string {
     return '';
   }
 
-  return `${date.getMonth() + 1}/${date.getDate()} ${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+  const parts = getAppScheduleDateParts(date);
+
+  return `${parts.month}/${parts.day} ${padTwo(parts.hours)}:${padTwo(parts.minutes)}`;
 }
 
 export function formatDraftDateInputValue(value: string): string {
@@ -188,7 +231,9 @@ export function formatDraftDateInputValue(value: string): string {
     return '';
   }
 
-  return `${date.getFullYear()}-${padTwo(date.getMonth() + 1)}-${padTwo(date.getDate())}`;
+  const parts = getAppScheduleDateParts(date);
+
+  return `${parts.year}-${padTwo(parts.month)}-${padTwo(parts.day)}`;
 }
 
 export function formatDraftTimeInputValue(value: string): string {
@@ -198,7 +243,30 @@ export function formatDraftTimeInputValue(value: string): string {
     return '';
   }
 
-  return `${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`;
+  const parts = getAppScheduleDateParts(date);
+
+  return `${padTwo(parts.hours)}:${padTwo(parts.minutes)}`;
+}
+
+export function buildScheduleLabels(startsAt: string, _endsAt?: string | null): ScheduleLabels | null {
+  const startDate = parseDraftDateTime(startsAt);
+
+  if (!startDate) {
+    return null;
+  }
+
+  const parts = getAppScheduleDateParts(startDate);
+  const startTime = `${padTwo(parts.hours)}:${padTwo(parts.minutes)}`;
+
+  return {
+    dateLabel: `${parts.month}월 ${parts.day}일`,
+    timeLabel: startTime,
+  };
+}
+
+export function buildCardScheduleTitle(location: string): string {
+  const cleanLocation = location.trim() || '장소 미정';
+  return `${cleanLocation}에서 약속`;
 }
 
 export function mergeDraftDatePart(currentValue: string, dateValue: string): string {
@@ -209,7 +277,9 @@ export function mergeDraftDatePart(currentValue: string, dateValue: string): str
     return currentDate.toISOString();
   }
 
-  return new Date(year, month - 1, day, currentDate.getHours(), currentDate.getMinutes(), 0, 0).toISOString();
+  const currentParts = getAppScheduleDateParts(currentDate);
+
+  return createAppScheduleDate(year, month, day, currentParts.hours, currentParts.minutes).toISOString();
 }
 
 export function mergeDraftTimePart(currentValue: string, timeValue: string): string {
@@ -220,40 +290,31 @@ export function mergeDraftTimePart(currentValue: string, timeValue: string): str
     return currentDate.toISOString();
   }
 
-  return new Date(
-    currentDate.getFullYear(),
-    currentDate.getMonth(),
-    currentDate.getDate(),
-    hours,
-    minutes,
-    0,
-    0,
-  ).toISOString();
+  const currentParts = getAppScheduleDateParts(currentDate);
+
+  return createAppScheduleDate(currentParts.year, currentParts.month, currentParts.day, hours, minutes).toISOString();
 }
 
 export function mergeDraftDateTime(currentValue: string, selectedDate: Date, mode: 'date' | 'time'): string {
   const currentDate = parseDraftDateTime(currentValue) ?? new Date(createDefaultDraftTime());
+  const currentParts = getAppScheduleDateParts(currentDate);
 
   if (mode === 'date') {
-    return new Date(
+    return createAppScheduleDate(
       selectedDate.getFullYear(),
-      selectedDate.getMonth(),
+      selectedDate.getMonth() + 1,
       selectedDate.getDate(),
-      currentDate.getHours(),
-      currentDate.getMinutes(),
-      0,
-      0,
+      currentParts.hours,
+      currentParts.minutes,
     ).toISOString();
   }
 
-  return new Date(
-    currentDate.getFullYear(),
-    currentDate.getMonth(),
-    currentDate.getDate(),
+  return createAppScheduleDate(
+    currentParts.year,
+    currentParts.month,
+    currentParts.day,
     selectedDate.getHours(),
     selectedDate.getMinutes(),
-    0,
-    0,
   ).toISOString();
 }
 
@@ -268,7 +329,9 @@ export function compactDraftTimes(times: string[]): string[] {
 
 function getDraftTimeKey(value: string): string {
   const date = parseDraftDateTime(value) ?? new Date(createDefaultDraftTime());
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}-${date.getHours()}-${date.getMinutes()}`;
+  const parts = getAppScheduleDateParts(date);
+
+  return `${parts.year}-${parts.month}-${parts.day}-${parts.hours}-${parts.minutes}`;
 }
 
 function hasDuplicateDraftTimes(times: string[]): boolean {
@@ -424,6 +487,22 @@ export function getSentResponseArrivalCards(
   return cards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === 'SENT_HAS_RESPONSE');
 }
 
+export function getReceivedConfirmedScheduleCards(
+  cards: PromiseCard[],
+  now = new Date(),
+  currentProfile?: ManagedCardCurrentProfile,
+): PromiseCard[] {
+  return cards.filter((card) => getManagedCardInboxTab(card, now, currentProfile) === 'RECEIVED_CONFIRMED');
+}
+
+export function getManagedCardConfirmationNoticeFingerprints(
+  cards: Array<Pick<PromiseCard, 'id' | 'status' | 'selectedSlotId' | 'candidates'>>,
+): string[] {
+  return cards
+    .map((card) => `${card.id}:${card.selectedSlotId ?? getPrimarySlot(card)?.id ?? ''}:${card.status}`)
+    .sort();
+}
+
 export function getManagedCardResponseNoticeSignature(
   cards: Array<Pick<PromiseCard, 'id' | 'status' | 'candidates' | 'participants'>>,
 ): string {
@@ -528,6 +607,58 @@ function normalizeProfileText(value: string | undefined): string {
   return value?.trim().replace(/\s+/g, ' ') ?? '';
 }
 
+export function getScheduleParticipantsForViewer(
+  participants: Participant[],
+  currentProfile?: ManagedCardCurrentProfile,
+): Participant[] {
+  const currentProfileId = currentProfile?.id;
+  const currentProfileName = normalizeProfileText(currentProfile?.displayName);
+
+  return participants
+    .filter((participant) => {
+      if (currentProfileId && participant.id === currentProfileId) {
+        return false;
+      }
+
+      if (!currentProfileName) {
+        return true;
+      }
+
+      return normalizeProfileText(participant.displayName ?? participant.name) !== currentProfileName;
+    })
+    .map((participant) => ({
+      ...participant,
+      responses: participant.responses?.map((response) => ({ ...response })),
+    }));
+}
+
+function buildRequesterScheduleParticipant(card: Pick<PromiseCard, 'id' | 'requesterName' | 'candidates'>): Participant | null {
+  const displayName = card.requesterName?.trim();
+
+  if (!displayName) {
+    return null;
+  }
+
+  return {
+    id: `requester-${card.id}`,
+    name: displayName.slice(0, 1) || '?',
+    displayName,
+    color: '#DDEBFF',
+    choice: 'YES',
+    responses: card.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      choice: 'YES',
+    })),
+  };
+}
+
+function getScheduleCardParticipants(card: PromiseCard, currentProfile?: ManagedCardCurrentProfile): Participant[] {
+  const participants = getScheduleParticipantsForViewer(card.participants, currentProfile);
+  const requesterParticipant = buildRequesterScheduleParticipant(card);
+
+  return requesterParticipant ? [requesterParticipant, ...participants] : participants;
+}
+
 function getCurrentProfileParticipant(card: PromiseCard, currentProfile?: ManagedCardCurrentProfile): Participant | null {
   if (!currentProfile) {
     return null;
@@ -621,6 +752,20 @@ export function getReceivedCardResponseBadges(
 
 export function shouldShowManagedCardRowMeta(card: PromiseCard): boolean {
   return getManagedCardScope(card) === 'SENT' && getManagedCardResponseStats(card).total > 0;
+}
+
+function normalizeCardDisplayText(value: string): string {
+  return value.trim().replace(/\s+/g, '');
+}
+
+export function shouldShowCardLocationDetail(card: Pick<PromiseCard, 'title' | 'location'>): boolean {
+  const location = normalizeCardDisplayText(card.location);
+
+  if (!location) {
+    return false;
+  }
+
+  return !normalizeCardDisplayText(card.title).includes(location);
 }
 
 export function getManagedCardInboxTab(
@@ -857,7 +1002,10 @@ export function canHideManagedPastCard(card: PromiseCard, now = new Date()): boo
   return getManagedStatusGroup(card, now) === 'PAST';
 }
 
-export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleItem | null {
+export function buildScheduleItemFromConfirmedCard(
+  card: PromiseCard,
+  currentProfile?: ManagedCardCurrentProfile,
+): ScheduleItem | null {
   if (card.status !== 'CONFIRMED') {
     return null;
   }
@@ -870,32 +1018,25 @@ export function buildScheduleItemFromConfirmedCard(card: PromiseCard): ScheduleI
     return null;
   }
 
-  const startDate = parseDraftDateTime(selectedSlot.startsAt);
+  const scheduleLabels = buildScheduleLabels(selectedSlot.startsAt, selectedSlot.endsAt);
 
-  if (!startDate) {
+  if (!scheduleLabels) {
     return null;
   }
-
-  const endDate = parseDraftDateTime(selectedSlot.endsAt);
-  const titleName = card.requesterName ?? card.hostName;
 
   return {
     id: `schedule-${card.id}`,
     cardId: card.id,
-    title: `${titleName} · ${card.location}`,
+    title: buildCardScheduleTitle(card.location),
     startsAt: selectedSlot.startsAt,
     endsAt: selectedSlot.endsAt,
-    dateLabel: `${startDate.getMonth() + 1}월 ${startDate.getDate()}일`,
-    timeLabel: endDate
-      ? `${padTwo(startDate.getHours())}:${padTwo(startDate.getMinutes())} - ${padTwo(endDate.getHours())}:${padTwo(
-          endDate.getMinutes(),
-        )}`
-      : `${padTwo(startDate.getHours())}:${padTwo(startDate.getMinutes())}`,
+    dateLabel: scheduleLabels.dateLabel,
+    timeLabel: scheduleLabels.timeLabel,
     location: card.location,
     status: 'REMINDER_ON',
     selectedSlotId: selectedSlot.id,
     candidates: card.candidates.map((candidate) => ({ ...candidate })),
-    participants: card.participants.map((participant) => ({ ...participant })),
+    participants: getScheduleCardParticipants(card, currentProfile),
   };
 }
 

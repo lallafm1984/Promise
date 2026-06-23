@@ -27,6 +27,7 @@ import {
   getReceivedCardResponseBadges,
   getRecommendedConfirmationCandidate,
   getShareUrlForClipboard,
+  shouldShowCardLocationDetail,
   type ManagedCardActionKind,
   type ManagedCardInboxTab,
   type ManagedCardScope,
@@ -45,7 +46,11 @@ import {
   UNSHAREABLE_PREVIEW_CARD_MESSAGE,
   isShareablePublicCard,
 } from '@/lib/previewActions';
-import { getPreviewFriendOptions, getPreviewRecipientProfileIds, selectOnePreviewFriend } from '@/lib/previewFriends';
+import { getPreviewFriendOptions, getPreviewRecipientProfileIds, togglePreviewFriendSelection } from '@/lib/previewFriends';
+import {
+  getReceivedCardResponseErrorMessage,
+  isReceivedCardResponseUnavailableError,
+} from '@/lib/responseErrors';
 import type { CandidateSlot, Participant, PromiseCard, ReceivedCardResponseChoice, ResponseChoice } from '@/types/promise';
 
 type SelectableResponseChoice = Exclude<ReceivedCardResponseChoice, 'MAYBE'>;
@@ -121,6 +126,7 @@ function QuickConfirmCard({
 }) {
   const stats = getManagedCardResponseStats(card);
   const hasConfirmableCandidate = card.candidates.some(canConfirmCandidateSlot);
+  const shouldShowLocation = shouldShowCardLocationDetail(card);
   const selectedCandidate =
     card.mode === 'DIRECT'
       ? suggestedCandidate
@@ -212,9 +218,11 @@ function QuickConfirmCard({
             {suggestedCandidate.label}
           </Text>
         )}
-        <Text style={styles.quickConfirmLocation} numberOfLines={1}>
-          {card.location}
-        </Text>
+        {shouldShowLocation ? (
+          <Text style={styles.quickConfirmLocation} numberOfLines={1}>
+            {card.location}
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.quickConfirmStats}>
@@ -385,6 +393,8 @@ export default function ManageCardsScreen() {
   const [activeTab, setActiveTab] = useState<ManagedCardInboxTab>('SENT_NO_RESPONSE');
   const [resultCard, setResultCard] = useState<PromiseCard | null>(null);
   const [responseCard, setResponseCard] = useState<PromiseCard | null>(null);
+  const [responseFeedback, setResponseFeedback] = useState<string | null>(null);
+  const [isResponseUnavailable, setIsResponseUnavailable] = useState(false);
   const [reshareCard, setReshareCard] = useState<PromiseCard | null>(null);
   const [deleteConfirmCard, setDeleteConfirmCard] = useState<PromiseCard | null>(null);
   const [isReshareFriendPickerOpen, setIsReshareFriendPickerOpen] = useState(false);
@@ -402,13 +412,14 @@ export default function ManageCardsScreen() {
     () => (profile ? { id: profile.id, displayName: profile.displayName } : undefined),
     [profile],
   );
-  const { options: previewFriendOptions, isUsingTestFriends } = useMemo(
+  const { options: previewFriendOptions } = useMemo(
     () => getPreviewFriendOptions(friends),
     [friends],
   );
+  const selectedFriendCount = selectedFriendIds.length;
   useFocusEffect(
     useCallback(() => {
-      void reloadManagedCards();
+      void reloadManagedCards({ force: true });
     }, [reloadManagedCards]),
   );
   useEffect(() => {
@@ -488,6 +499,8 @@ export default function ManageCardsScreen() {
       setResponseCard(card);
       setResponseChoices({});
       setResponseComment('');
+      setResponseFeedback(null);
+      setIsResponseUnavailable(false);
       return;
     }
 
@@ -646,12 +659,17 @@ export default function ManageCardsScreen() {
     setReshareFeedback(null);
   }
 
+  function goToFriendAddFromReshare() {
+    setIsReshareFriendPickerOpen(false);
+    router.push('/friends');
+  }
+
   function toggleReshareFriendSelection(friendId: string) {
-    setSelectedFriendIds((currentIds) => selectOnePreviewFriend(currentIds, friendId));
+    setSelectedFriendIds((currentIds) => togglePreviewFriendSelection(currentIds, friendId));
   }
 
   async function handleConfirmReshareFriendSend() {
-    if (!reshareCard || selectedFriendIds.length === 0) {
+    if (!reshareCard || selectedFriendCount === 0) {
       return;
     }
 
@@ -662,13 +680,15 @@ export default function ManageCardsScreen() {
 
     const recipientProfileIds = getPreviewRecipientProfileIds(friends, selectedFriendIds);
 
+    if (recipientProfileIds.length === 0) {
+      setReshareFeedback('실제 앱 친구를 추가한 뒤 카드를 보내 주세요.');
+      return;
+    }
+
     setIsReshareActionPending(true);
 
     try {
-      if (!isUsingTestFriends) {
-        await sendManagedCardToRecipients(reshareCard, recipientProfileIds);
-      }
-
+      await sendManagedCardToRecipients(reshareCard, recipientProfileIds);
       closeReshareModal();
     } catch {
       setReshareFeedback('카드를 보내지 못했어요. 다시 시도해 주세요.');
@@ -711,17 +731,26 @@ export default function ManageCardsScreen() {
       .filter((response): response is { candidateId: string; choice: SelectableResponseChoice } => Boolean(response.choice));
 
     if (responses.length !== responseCard.candidates.length) {
+      setResponseFeedback('모든 시간에 응답을 선택해 주세요.');
       return;
     }
 
+    setResponseFeedback(null);
     setIsResponding(true);
 
     try {
       const respondedCard = await respondToReceivedCard(responseCard.id, responses, responseComment);
       selectTab(getManagedCardInboxTab(respondedCard, now, currentProfile));
       closeResponseModal();
-    } catch {
-      return;
+    } catch (error) {
+      setResponseFeedback(getReceivedCardResponseErrorMessage(error));
+
+      if (isReceivedCardResponseUnavailableError(error)) {
+        setIsResponseUnavailable(true);
+        hideReceivedRepliedCard(responseCard, now, currentProfile);
+      }
+
+      await reloadManagedCards({ force: true });
     } finally {
       setIsResponding(false);
     }
@@ -738,6 +767,8 @@ export default function ManageCardsScreen() {
     setResponseCard(null);
     setResponseChoices({});
     setResponseComment('');
+    setResponseFeedback(null);
+    setIsResponseUnavailable(false);
   }
 
   function selectQuickConfirmCandidate(cardId: string, candidateId: string) {
@@ -749,7 +780,9 @@ export default function ManageCardsScreen() {
 
   const responseGroup = responseCard ? getManagedStatusGroup(responseCard, now) : null;
   const responseBadges = responseCard ? getReceivedCardResponseBadges(responseCard, currentProfile) : [];
-  const canRespond = responseCard ? (responseGroup === 'PENDING' || responseGroup === 'VOTING') && responseBadges.length === 0 : false;
+  const canRespond = responseCard
+    ? !isResponseUnavailable && (responseGroup === 'PENDING' || responseGroup === 'VOTING') && responseBadges.length === 0
+    : false;
   const hasAllResponseChoices = responseCard
     ? responseCard.candidates.every((candidate) => Boolean(responseChoices[candidate.id]))
     : false;
@@ -953,12 +986,32 @@ export default function ManageCardsScreen() {
 
                 {isReshareFriendPickerOpen ? (
                   <View style={styles.friendPicker}>
-                    <Text style={styles.friendPickerTitle}>보낼 친구 선택</Text>
+                    <View style={styles.friendPickerHeadingRow}>
+                      <Text style={styles.friendPickerTitle}>보낼 친구 선택</Text>
+                      {!isFriendsLoading && previewFriendOptions.length > 0 ? (
+                        <Text style={styles.friendPickerCount}>
+                          {selectedFriendCount > 0 ? `${selectedFriendCount}명 선택` : `전체 ${previewFriendOptions.length}명`}
+                        </Text>
+                      ) : null}
+                    </View>
                     {isFriendsLoading ? <Text style={styles.friendPickerNotice}>친구 목록을 불러오는 중이에요.</Text> : null}
-                    {!isFriendsLoading && isUsingTestFriends ? (
-                      <Text style={styles.friendPickerNotice}>실제 앱 친구가 없어 테스트 친구로 보내기 흐름을 확인할 수 있어요.</Text>
+                    {!isFriendsLoading && previewFriendOptions.length === 0 ? (
+                      <View style={styles.friendPickerEmpty}>
+                        <Text style={styles.friendPickerNotice}>
+                          앱 친구가 아직 없어요. 친구 아이디로 먼저 친구를 추가하면 카드와 알림이 실제로 전달돼요.
+                          {'\n'}친구 추가 후 관리함으로 돌아오면 이 카드 보내기를 이어갈 수 있어요.
+                        </Text>
+                        <ActionButton
+                          label="친구 추가"
+                          variant="secondary"
+                          icon={<UsersRound size={18} color={palette.primaryDeep} />}
+                          disabled={isReshareActionPending}
+                          fullWidth
+                          onPress={goToFriendAddFromReshare}
+                        />
+                      </View>
                     ) : null}
-                    {!isFriendsLoading ? (
+                    {!isFriendsLoading && previewFriendOptions.length > 0 ? (
                       <View style={styles.friendPickerList}>
                         {previewFriendOptions.map((friend) => {
                           const selected = selectedFriendIds.includes(friend.id);
@@ -984,7 +1037,7 @@ export default function ManageCardsScreen() {
                               </View>
                               <View style={[styles.friendCheck, selected && styles.selectedFriendCheck]}>
                                 <Text style={[styles.friendCheckText, selected && styles.selectedFriendCheckText]}>
-                                  {selected ? '선택' : '대기'}
+                                  {selected ? '선택됨' : '선택하기'}
                                 </Text>
                               </View>
                             </Pressable>
@@ -1001,8 +1054,14 @@ export default function ManageCardsScreen() {
                         onPress={() => setIsReshareFriendPickerOpen(false)}
                       />
                       <ActionButton
-                        label={isReshareActionPending ? '보내는 중' : '보내기'}
-                        disabled={isReshareActionPending || selectedFriendIds.length === 0}
+                        label={
+                          isReshareActionPending
+                            ? '보내는 중'
+                            : selectedFriendCount > 0
+                              ? `${selectedFriendCount}명에게 보내기`
+                              : '보내기'
+                        }
+                        disabled={isReshareActionPending || selectedFriendCount === 0}
                         fullWidth
                         onPress={() => void handleConfirmReshareFriendSend()}
                       />
@@ -1061,7 +1120,9 @@ export default function ManageCardsScreen() {
                   <Text style={styles.resultTitle} numberOfLines={2}>
                     {resultCard.title}
                   </Text>
-                  <Text style={styles.resultSubtitle}>{resultCard.location}</Text>
+                  {shouldShowCardLocationDetail(resultCard) ? (
+                    <Text style={styles.resultSubtitle}>{resultCard.location}</Text>
+                  ) : null}
                 </View>
                 <Pressable
                   accessibilityRole="button"
@@ -1188,7 +1249,9 @@ export default function ManageCardsScreen() {
                   <Text style={styles.resultTitle} numberOfLines={2}>
                     {responseCard.title}
                   </Text>
-                  <Text style={styles.resultSubtitle}>{responseCard.location}</Text>
+                  {shouldShowCardLocationDetail(responseCard) ? (
+                    <Text style={styles.resultSubtitle}>{responseCard.location}</Text>
+                  ) : null}
                 </View>
                 <Pressable
                   accessibilityRole="button"
@@ -1245,6 +1308,15 @@ export default function ManageCardsScreen() {
                 ) : null}
 
                 {responseBadges.length > 0 ? <ResponseBadgeSummary badges={responseBadges} /> : null}
+                {responseFeedback ? (
+                  <Text
+                    style={[
+                      styles.responseFeedback,
+                      isResponseUnavailable && styles.responseUnavailableFeedback,
+                    ]}>
+                    {responseFeedback}
+                  </Text>
+                ) : null}
                 {canRespond ? (
                   <ActionButton
                     label={isResponding ? '응답 중' : '응답 보내기'}
@@ -1253,9 +1325,7 @@ export default function ManageCardsScreen() {
                     fullWidth
                     onPress={() => void handleSubmitResponse()}
                   />
-                ) : responseBadges.length > 0 ? null : (
-                  <Text style={styles.responseClosedText}>지난 카드는 내용을 확인만 할 수 있어요.</Text>
-                )}
+                ) : null}
               </ScrollView>
             </Card>
           ) : null}
@@ -1843,13 +1913,27 @@ const styles = StyleSheet.create({
   friendPicker: {
     gap: spacing.sm,
   },
+  friendPickerHeadingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+  },
   friendPickerTitle: {
     color: palette.ink,
     fontSize: 16,
     fontWeight: '900',
   },
+  friendPickerCount: {
+    color: palette.inkMuted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
   friendPickerList: {
     gap: spacing.xs,
+  },
+  friendPickerEmpty: {
+    gap: spacing.sm,
   },
   friendPickerNotice: {
     backgroundColor: palette.paper,
@@ -2177,7 +2261,7 @@ const styles = StyleSheet.create({
   },
   responseChoiceButton: {
     alignItems: 'center',
-    backgroundColor: palette.surface,
+    backgroundColor: palette.amberSoft,
     borderColor: palette.lineStrong,
     borderRadius: radius.sm,
     borderWidth: 1.5,
@@ -2244,15 +2328,18 @@ const styles = StyleSheet.create({
     gap: 5,
     minWidth: 0,
   },
-  responseClosedText: {
+  responseFeedback: {
     backgroundColor: palette.amberSoft,
     borderColor: palette.lineStrong,
     borderRadius: radius.md,
     borderWidth: 1.5,
-    color: palette.inkMuted,
+    color: palette.ink,
     fontSize: 13,
     fontWeight: '900',
     lineHeight: 19,
     padding: spacing.sm,
+  },
+  responseUnavailableFeedback: {
+    backgroundColor: palette.coralSoft,
   },
 });

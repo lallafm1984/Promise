@@ -137,6 +137,19 @@ const notificationEventOutboxMigrationPath = join(
   'migrations',
   '20260623160000_notification_event_outbox.sql',
 );
+const notificationWorkerCronMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260624154500_notification_worker_cron.sql',
+);
+const notificationWorkerPath = join(
+  process.cwd(),
+  'supabase',
+  'functions',
+  'notification-worker',
+  'index.ts',
+);
 
 describe('Supabase notification migrations', () => {
   it('revokes direct client execution from notification trigger functions', () => {
@@ -363,6 +376,32 @@ describe('Supabase notification migrations', () => {
     expect(sql).toContain('grant execute on function public.mark_notification_event_failed(uuid, text) to service_role;');
     expect(sql).not.toContain('grant execute on function public.claim_notification_events(integer) to authenticated;');
     expect(sql).not.toContain('grant execute on function public.claim_notification_events(integer) to anon;');
+  });
+
+  it('adds the outbox worker that delivers push notifications while the app is closed', () => {
+    expect(existsSync(notificationWorkerPath)).toBe(true);
+
+    const source = readFileSync(notificationWorkerPath, 'utf8');
+
+    expect(source).toContain('SUPABASE_SERVICE_ROLE_KEY');
+    expect(source).toContain('claim_notification_events');
+    expect(source).toContain('https://exp.host/--/api/v2/push/send');
+    expect(source).toContain('mark_notification_event_delivered');
+    expect(source).toContain('mark_notification_event_failed');
+  });
+
+  it('schedules the notification outbox worker through cron and Vault-backed function auth', () => {
+    expect(existsSync(notificationWorkerCronMigrationPath)).toBe(true);
+
+    const sql = readFileSync(notificationWorkerCronMigrationPath, 'utf8');
+
+    expect(sql).toContain('create extension if not exists pg_cron');
+    expect(sql).toContain('create extension if not exists pg_net');
+    expect(sql).toContain('vault.decrypted_secrets');
+    expect(sql).toContain('cron.schedule');
+    expect(sql).toContain('whenbollae-notification-worker');
+    expect(sql).toContain('/functions/v1/notification-worker');
+    expect(sql).toContain("'Authorization', 'Bearer '");
   });
 
   it('adds mobile delta sync metadata without opening anonymous access', () => {

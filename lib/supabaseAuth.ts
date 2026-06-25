@@ -99,7 +99,7 @@ function readAuthParams(url: string): AuthCallbackParams | null {
 
 export async function createSessionFromUrl(url: string): Promise<Session | null> {
   if (!supabase) {
-    throw new Error('Supabase 설정이 필요해요.');
+    throw new Error('로그인 설정이 필요해요.');
   }
 
   const params = readAuthParams(url);
@@ -142,7 +142,7 @@ export async function createSessionFromUrl(url: string): Promise<Session | null>
 
 export async function signInWithSocialProvider(provider: SocialProviderId) {
   if (!supabase) {
-    throw new Error('Supabase 설정이 필요해요.');
+    throw new Error('로그인 설정이 필요해요.');
   }
 
   const redirectTo = getAuthRedirectUrl();

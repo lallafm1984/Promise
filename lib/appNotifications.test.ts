@@ -19,6 +19,7 @@ const scheduleNotificationAsync = vi.fn();
 const setNotificationChannelAsync = vi.fn();
 const setNotificationHandler = vi.fn();
 const getPermissionsAsync = vi.fn();
+const requestPermissionsAsync = vi.fn();
 const getActiveFriendRepository = vi.fn();
 const getActivePromiseRepository = vi.fn();
 const getHostProfile = vi.fn();
@@ -83,6 +84,7 @@ vi.mock('expo-notifications', () => ({
   getExpoPushTokenAsync,
   getLastNotificationResponse,
   getPermissionsAsync,
+  requestPermissionsAsync,
   scheduleNotificationAsync,
   setNotificationChannelAsync,
   setNotificationHandler,
@@ -189,6 +191,7 @@ describe('app notification registration', () => {
       remove: removeNotificationResponseReceivedListener,
     });
     getPermissionsAsync.mockReset().mockResolvedValue({ status: 'granted' });
+    requestPermissionsAsync.mockReset().mockResolvedValue({ status: 'granted' });
     scheduleNotificationAsync.mockReset().mockResolvedValue('test-notification-id');
     setNotificationChannelAsync.mockClear();
     setNotificationHandler.mockClear();
@@ -323,6 +326,17 @@ describe('app notification registration', () => {
       }),
       { onConflict: 'provider,token' },
     );
+  });
+
+  it('requests phone permission and enables notifications by default when the account setting is missing', async () => {
+    getPermissionsAsync.mockResolvedValueOnce({ status: 'undetermined' });
+    requestPermissionsAsync.mockResolvedValueOnce({ status: 'granted' });
+    const { ensureDefaultAppNotificationEnabled } = await import('./appNotifications');
+
+    await expect(ensureDefaultAppNotificationEnabled()).resolves.toBe(true);
+
+    expect(requestPermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(asyncStorageValues.get(notificationEnabledKey)).toBe('true');
   });
 
   it('does not read another account notification setting as the current account setting', async () => {
@@ -548,7 +562,7 @@ describe('app notification registration', () => {
     expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-seongsu"]');
   });
 
-  it('does not drop the first received card notification when seen card storage is missing', async () => {
+  it('seeds received cards without replaying a local notification when seen card storage is missing', async () => {
     asyncStorageValues.set(notificationEnabledKey, 'true');
     listReceivedCardAlerts.mockResolvedValueOnce([
       {
@@ -558,21 +572,73 @@ describe('app notification registration', () => {
         requesterName: 'Minseo',
         createdAt: '2026-06-16T13:00:00+09:00',
       },
+      {
+        id: 'card-second',
+        title: 'Second card',
+        location: 'Hongdae',
+        requesterName: 'Jiu',
+        createdAt: '2026-06-16T13:05:00+09:00',
+      },
     ]);
     const { checkSocialNotifications } = await import('./appNotifications');
 
     await checkSocialNotifications();
 
-    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
-    expect(scheduleNotificationAsync).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.objectContaining({
-          data: { url: '/manage', type: 'card_received', id: 'card-first' },
-        }),
-        trigger: { channelId: 'whenbollae-default' },
-      }),
-    );
-    expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-first"]');
+    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
+    expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-first","card-second"]');
+  });
+
+  it('seeds stale social state without replaying local notifications when server push is registered', async () => {
+    asyncStorageValues.set(notificationEnabledKey, 'true');
+    asyncStorageValues.set(expoPushTokenKey, 'ExponentPushToken[test-token]');
+    asyncStorageValues.set(seenFriendRequestIdsKey, '[]');
+    asyncStorageValues.set(seenFriendIdsKey, '[]');
+    asyncStorageValues.set(seenCardIdsKey, '[]');
+    asyncStorageValues.set(seenCardResponseFingerprintsKey, '[]');
+    asyncStorageValues.set(seenCardConfirmationFingerprintsKey, '[]');
+    listFriendState.mockResolvedValueOnce({
+      friends: [
+        {
+          id: 'friend-jiu',
+          profileId: 'profile-jiu',
+          displayName: 'Jiu',
+          handle: 'jiu',
+          avatarLabel: 'J',
+          color: '#DDEBFF',
+          lastActiveLabel: 'now',
+        },
+      ],
+      requests: [
+        {
+          id: 'request-harin',
+          direction: 'INCOMING',
+          profileId: 'profile-harin',
+          displayName: 'Harin',
+          handle: 'harin',
+          avatarLabel: 'H',
+          color: '#FFE0B8',
+          requestedAt: '2026-06-16T12:00:00+09:00',
+        },
+      ],
+      suggestions: [],
+    });
+    listReceivedCardAlerts.mockResolvedValueOnce([
+      {
+        id: 'card-server-pushed',
+        title: 'Server pushed card',
+        location: 'Seongsu',
+        requesterName: 'Minseo',
+        createdAt: '2026-06-16T13:00:00+09:00',
+      },
+    ]);
+    const { checkSocialNotifications } = await import('./appNotifications');
+
+    await checkSocialNotifications();
+
+    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
+    expect(asyncStorageValues.get(seenFriendRequestIdsKey)).toBe('["request-harin"]');
+    expect(asyncStorageValues.get(seenFriendIdsKey)).toBe('["friend-jiu"]');
+    expect(asyncStorageValues.get(seenCardIdsKey)).toBe('["card-server-pushed"]');
   });
 
   it('does not duplicate a received card notification when realtime refreshes overlap', async () => {
@@ -738,7 +804,7 @@ describe('app notification registration', () => {
     ]);
   });
 
-  it('does not drop the first response notification when response fingerprint storage is missing', async () => {
+  it('seeds card response fingerprints without replaying a local notification when storage is missing', async () => {
     asyncStorageValues.set(notificationEnabledKey, 'true');
     asyncStorageValues.set(seenFriendRequestIdsKey, '[]');
     asyncStorageValues.set(seenFriendIdsKey, '[]');
@@ -780,15 +846,7 @@ describe('app notification registration', () => {
 
     await checkSocialNotifications();
 
-    expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
-    expect(scheduleNotificationAsync).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.objectContaining({
-          data: { url: '/manage?tab=SENT_HAS_RESPONSE', type: 'card_response_received', id: 'card-response-first' },
-        }),
-        trigger: { channelId: 'whenbollae-default' },
-      }),
-    );
+    expect(scheduleNotificationAsync).not.toHaveBeenCalled();
     expect(JSON.parse(asyncStorageValues.get(seenCardResponseFingerprintsKey) ?? '[]')).toEqual([
       'card-response-first:profile-jiu:YES:Jiu::slot-1:YES',
     ]);

@@ -9,6 +9,7 @@ import {
   DEFAULT_APP_NOTIFICATION_PREFERENCES,
   disableAppNotifications,
   enableAppNotifications,
+  ensureDefaultAppNotificationEnabled,
   ensureAppNotificationEnabledForGrantedPermission,
   getAppNotificationPreferencesSnapshot,
   getAppNotificationPermissionStatus,
@@ -29,7 +30,7 @@ import type { ReminderLead } from '@/types/promise';
 import { supabase } from '@/lib/supabase';
 
 async function refreshEnabledNotifications() {
-  if (!(await ensureAppNotificationEnabledForGrantedPermission())) {
+  if (!(await ensureDefaultAppNotificationEnabled())) {
     return;
   }
 

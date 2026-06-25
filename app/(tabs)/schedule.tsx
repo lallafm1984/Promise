@@ -36,11 +36,13 @@ import {
   X,
 } from 'lucide-react-native';
 
+import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { AppScreen, Card, Chip, SectionHeader } from '@/components/ui';
-import { palette, radius, spacing } from '@/constants/theme';
+import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { useManagedCards } from '@/hooks/useManagedCards';
 import { usePromiseData } from '@/hooks/usePromiseData';
 import { useSchedulePlanner } from '@/hooks/useSchedulePlanner';
+import { requestInterstitialAd } from '@/lib/interstitialAds';
 import {
   buildShareMessage,
   buildScheduleItemFromConfirmedCard,
@@ -631,9 +633,11 @@ export default function ScheduleScreen() {
       } else if (editingScheduleItem) {
         await updateManualScheduleItem(editingScheduleItem.id, input);
         closeComposer();
+        void requestInterstitialAd('manual_schedule_saved');
       } else {
         await createManualScheduleItem(input);
         closeComposer();
+        void requestInterstitialAd('manual_schedule_saved');
       }
 
       runMotionFeedback(contentMotion);
@@ -754,6 +758,7 @@ export default function ScheduleScreen() {
       }
 
       closeComposer();
+      void requestInterstitialAd('todo_saved');
       runMotionFeedback(contentMotion);
     } catch {
       runMotionFeedback(contentMotion);
@@ -897,7 +902,7 @@ export default function ScheduleScreen() {
 
   return (
     <>
-      <AppScreen reserveBottomTabs>
+      <AppScreen footer={<BottomBannerAd />} reserveBottomTabs>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -2126,9 +2131,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     flexDirection: 'row',
     gap: spacing.md,
-    minHeight: 132,
+    minHeight: compactHero.minHeight,
     overflow: 'hidden',
-    padding: spacing.lg,
+    paddingHorizontal: compactHero.paddingHorizontal,
+    paddingVertical: compactHero.paddingVertical,
   },
   headerCopy: {
     flex: 1,
@@ -2147,9 +2153,9 @@ const styles = StyleSheet.create({
   },
   headerShapeMint: {
     backgroundColor: palette.amber,
-    bottom: 18,
+    bottom: -24,
     height: 38,
-    left: -12,
+    left: -44,
     position: 'absolute',
     transform: [{ rotate: '7deg' }],
     width: 124,
@@ -2170,15 +2176,15 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.ink,
-    fontSize: 28,
+    fontSize: compactHero.titleSize,
     fontWeight: '900',
-    lineHeight: 35,
+    lineHeight: compactHero.titleLineHeight,
   },
   subtitle: {
     color: palette.inkMuted,
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 20,
+    fontSize: compactHero.subtitleSize,
+    fontWeight: '700',
+    lineHeight: compactHero.subtitleLineHeight,
   },
   modeTabs: {
     flexDirection: 'row',
@@ -2792,7 +2798,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     alignItems: 'center',
-    backgroundColor: 'rgba(75, 52, 40, 0.42)',
+    backgroundColor: modalOverlay.backdrop,
     flex: 1,
     justifyContent: 'center',
     padding: spacing.md,
@@ -3263,7 +3269,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   disabledSubmitText: {
-    color: palette.inkSoft,
+    color: palette.inkDisabled,
   },
   pressed: {
     opacity: 0.72,

@@ -12,8 +12,9 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { Modal, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { ActionButton, AppScreen, Card, SectionHeader } from '@/components/ui';
-import { palette, radius, spacing } from '@/constants/theme';
+import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { mapProfileToHostProfile, updateAuthenticatedProfile } from '@/data/supabaseProfile';
 import { useNotificationSettings } from '@/hooks/useAppNotifications';
 import { usePromiseData } from '@/hooks/usePromiseData';
@@ -153,7 +154,7 @@ export default function ProfileScreen() {
 
   return (
     <>
-      <AppScreen reserveBottomTabs>
+      <AppScreen footer={<BottomBannerAd />} reserveBottomTabs>
         <View style={styles.header}>
           <View style={styles.headerShapePrimary} />
           <View style={styles.headerShapeMint} />
@@ -577,9 +578,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     flexDirection: 'row',
     gap: spacing.md,
-    minHeight: 138,
+    minHeight: compactHero.minHeight,
     overflow: 'hidden',
-    padding: spacing.lg,
+    paddingHorizontal: compactHero.paddingHorizontal,
+    paddingVertical: compactHero.paddingVertical,
   },
   headerShapePrimary: {
     backgroundColor: palette.lilac,
@@ -637,15 +639,15 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.ink,
-    fontSize: 27,
+    fontSize: compactHero.titleSize,
     fontWeight: '900',
-    lineHeight: 34,
+    lineHeight: compactHero.titleLineHeight,
   },
   subtitle: {
     color: palette.inkMuted,
-    fontSize: 13,
-    fontWeight: '800',
-    lineHeight: 19,
+    fontSize: compactHero.subtitleSize,
+    fontWeight: '700',
+    lineHeight: compactHero.subtitleLineHeight,
   },
   authCard: {
     backgroundColor: palette.skySoft,
@@ -1073,7 +1075,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     alignItems: 'center',
-    backgroundColor: 'rgba(75, 52, 40, 0.42)',
+    backgroundColor: modalOverlay.backdrop,
     flex: 1,
     justifyContent: 'center',
     padding: spacing.md,

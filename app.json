@@ -8,7 +8,8 @@
     "scheme": "whenbollae",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "requireFullScreen": true
     },
     "android": {
       "package": "com.lim.whenbollae",
@@ -16,7 +17,7 @@
         "SCHEDULE_EXACT_ALARM"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#F9E5CC",
+        "backgroundColor": "#FD6572",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -35,7 +36,7 @@
         "expo-notifications",
         {
           "icon": "./assets/images/android-icon-monochrome.png",
-          "color": "#F97940",
+          "color": "#FD6572",
           "defaultChannel": "whenbollae-default"
         }
       ],

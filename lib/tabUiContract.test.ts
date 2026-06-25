@@ -8,6 +8,36 @@ function readAppFile(path: string) {
 }
 
 describe('bottom tab UI contract', () => {
+  it('keeps app icon assets and portrait orientation wired into config and Android', () => {
+    const appConfig = JSON.parse(readAppFile('app.json')).expo;
+    const notificationPlugin = appConfig.plugins.find((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-notifications');
+    const androidManifest = readAppFile('android/app/src/main/AndroidManifest.xml');
+
+    expect(appConfig.icon).toBe('./assets/images/icon.png');
+    expect(appConfig.orientation).toBe('portrait');
+    expect(appConfig.ios.requireFullScreen).toBe(true);
+    expect(appConfig.android.adaptiveIcon.backgroundColor).toBe('#FD6572');
+    expect(appConfig.android.adaptiveIcon.foregroundImage).toBe('./assets/images/android-icon-foreground.png');
+    expect(appConfig.android.adaptiveIcon.backgroundImage).toBe('./assets/images/android-icon-background.png');
+    expect(appConfig.android.adaptiveIcon.monochromeImage).toBe('./assets/images/android-icon-monochrome.png');
+    expect(notificationPlugin?.[1]).toMatchObject({
+      icon: './assets/images/android-icon-monochrome.png',
+      color: '#FD6572',
+    });
+    expect(androidManifest).toContain('android:screenOrientation="portrait"');
+  });
+
+  it('wires Firebase Google Services into native Android when the config file is present', () => {
+    const appConfigSource = readAppFile('app.config.js');
+    const rootGradle = readAppFile('android/build.gradle');
+    const appGradle = readAppFile('android/app/build.gradle');
+
+    expect(appConfigSource).toContain("withOptionalFileConfig(expo, 'android', 'googleServicesFile', GOOGLE_SERVICES_JSON)");
+    expect(rootGradle).toContain("classpath('com.google.gms:google-services:4.5.0')");
+    expect(appGradle).toContain('google-services.json');
+    expect(appGradle).toContain('com.google.gms.google-services');
+  });
+
   it('keeps visible bottom tabs in the requested product order', () => {
     const source = readAppFile('app/(tabs)/_layout.tsx');
     const visibleScreens = Array.from(source.matchAll(/<Tabs\.Screen\s+name="([^"]+)"/g))
@@ -15,6 +45,41 @@ describe('bottom tab UI contract', () => {
       .filter((name) => name !== 'index');
 
     expect(visibleScreens).toEqual(['create', 'manage', 'schedule', 'friends', 'profile']);
+  });
+
+  it('places banner ads in tab page footers without page padding below them', () => {
+    const layoutSource = readAppFile('app/(tabs)/_layout.tsx');
+    const uiSource = readAppFile('components/ui.tsx');
+    const tabScreens = ['create', 'manage', 'schedule', 'friends', 'profile'];
+
+    expect(layoutSource).not.toContain('BottomBannerAd');
+    expect(uiSource).toContain('footer?: ReactNode;');
+    expect(uiSource).toContain('paddingBottom: hasFooter ? 0 : bottomPadding');
+    expect(uiSource).toContain('hasFooter && styles.screenContentWithFooter');
+    expect(uiSource).toContain('<View style={styles.screenBody}>{children}</View>');
+    expect(uiSource).toContain('<View style={styles.screenFooter}>{footer}</View>');
+    expect(uiSource).toContain('screenContentWithFooter:');
+    expect(uiSource).toContain('flexGrow: 1');
+
+    for (const tab of tabScreens) {
+      const source = readAppFile(`app/(tabs)/${tab}.tsx`);
+
+      expect(source).toContain("import { BottomBannerAd } from '@/components/bottom-banner-ad';");
+      expect(source).toContain('footer={<BottomBannerAd />}');
+      expect(source).not.toMatch(/<BottomBannerAd \/>\s*<\/AppScreen>/);
+    }
+  });
+
+  it('requests interstitial ads only at configured user action points', () => {
+    const createSource = readAppFile('app/(tabs)/create.tsx');
+    const scheduleSource = readAppFile('app/(tabs)/schedule.tsx');
+
+    expect(createSource).toContain("import { requestInterstitialAd } from '@/lib/interstitialAds';");
+    expect(createSource.match(/requestInterstitialAd\('card_create_pressed'\)/g)).toHaveLength(1);
+    expect(createSource).not.toContain("requestInterstitialAd('card_delivery_success')");
+    expect(scheduleSource).toContain("import { requestInterstitialAd } from '@/lib/interstitialAds';");
+    expect(scheduleSource.match(/requestInterstitialAd\('manual_schedule_saved'\)/g)).toHaveLength(2);
+    expect(scheduleSource.match(/requestInterstitialAd\('todo_saved'\)/g)).toHaveLength(1);
   });
 
   it('preloads direct schedule planner data from the tab layout before the schedule screen opens', () => {
@@ -473,6 +538,87 @@ describe('create card optional message input', () => {
   });
 });
 
+describe('design audit responsive and contrast contract', () => {
+  it('keeps create mode cards in one horizontal row for large Android text', () => {
+    const cardMenuSource = readAppFile('components/card-menu.tsx');
+
+    expect(cardMenuSource).not.toContain('useWindowDimensions');
+    expect(cardMenuSource).not.toContain('shouldStackModes');
+    expect(cardMenuSource).not.toContain('stackedMode');
+    expect(cardMenuSource).toContain("flexDirection: 'row'");
+    expect(cardMenuSource).toContain('flex: 1');
+  });
+
+  it('moves decorative create hero shapes away from copy in large text mode', () => {
+    const createSource = readAppFile('app/(tabs)/create.tsx');
+
+    expect(createSource).toContain('const isLargeTextLayout = fontScale >= 1.2 || width < 380;');
+    expect(createSource).toContain('isLargeTextLayout && styles.largeTextHeader');
+    expect(createSource).toContain('isLargeTextLayout && styles.largeTextHeaderShapePrimary');
+    expect(createSource).toContain('isLargeTextLayout && styles.largeTextHeaderShapeMint');
+    expect(createSource).toContain('isLargeTextLayout && styles.largeTextHeaderShapeLime');
+    expect(createSource).toContain('bottom: -72');
+    expect(createSource).toContain('left: -48');
+    expect(createSource).toContain("fontWeight: '700'");
+  });
+
+  it('uses compact secondary heroes instead of full create-size banners', () => {
+    const secondaryTabs = ['manage', 'schedule', 'friends', 'profile'];
+
+    for (const tab of secondaryTabs) {
+      const source = readAppFile(`app/(tabs)/${tab}.tsx`);
+
+      expect(source).toContain("import { compactHero");
+      expect(source).toContain('minHeight: compactHero.minHeight');
+      expect(source).toContain('paddingHorizontal: compactHero.paddingHorizontal');
+      expect(source).toContain('paddingVertical: compactHero.paddingVertical');
+      expect(source).toContain('fontSize: compactHero.titleSize');
+      expect(source).toContain("fontWeight: '700'");
+    }
+  });
+
+  it('keeps schedule hero accent shapes out of the text column', () => {
+    const scheduleSource = readAppFile('app/(tabs)/schedule.tsx');
+
+    expect(scheduleSource).toContain('bottom: -24');
+    expect(scheduleSource).toContain('left: -44');
+  });
+
+  it('uses a stronger shared modal backdrop so tabs recede behind dialogs', () => {
+    const sources = [
+      readAppFile('app/(tabs)/create.tsx'),
+      readAppFile('app/(tabs)/manage.tsx'),
+      readAppFile('app/(tabs)/schedule.tsx'),
+      readAppFile('app/(tabs)/friends.tsx'),
+      readAppFile('app/(tabs)/profile.tsx'),
+    ];
+
+    expect(readAppFile('constants/theme.ts')).toContain("backdrop: 'rgba(75, 52, 40, 0.58)'");
+    for (const source of sources) {
+      expect(source).toContain('modalOverlay.backdrop');
+    }
+  });
+
+  it('uses a darker disabled text token for important unavailable states', () => {
+    const themeSource = readAppFile('constants/theme.ts');
+    const uiSource = readAppFile('components/ui.tsx');
+    const scheduleSource = readAppFile('app/(tabs)/schedule.tsx');
+
+    expect(themeSource).toContain("inkDisabled: '#6F5748'");
+    expect(uiSource).toContain('color: palette.inkDisabled');
+    expect(scheduleSource).toContain('color: palette.inkDisabled');
+  });
+
+  it('reduces friend summary card weight so the add-friend action remains dominant', () => {
+    const friendsSource = readAppFile('app/(tabs)/friends.tsx');
+
+    expect(friendsSource).toContain('minHeight: 56');
+    expect(friendsSource).toContain('paddingHorizontal: spacing.sm');
+    expect(friendsSource).toContain('fontSize: 20');
+    expect(friendsSource).toContain("fontWeight: '800'");
+  });
+});
+
 describe('create card app friend picker', () => {
   it('refreshes registered app friends when the create tab is focused', () => {
     const createSource = readAppFile('app/(tabs)/create.tsx');
@@ -588,16 +734,40 @@ describe('create card app friend picker', () => {
 });
 
 describe('received card response choices', () => {
-  it('uses a filled button color for response choices instead of a plain white surface', () => {
+  it('uses semantic green and red response choice colors with darker selected states', () => {
     const manageSource = readAppFile('app/(tabs)/manage.tsx');
-    const responseChoiceStart = manageSource.indexOf('responseChoiceButton:');
-    const responseChoiceEnd = manageSource.indexOf('selectedResponseChoiceButton:', responseChoiceStart);
-    const responseChoiceBlock = manageSource.slice(responseChoiceStart, responseChoiceEnd);
+    const responseButtonStart = manageSource.indexOf('function ResponseChoiceButton');
+    const responseButtonEnd = manageSource.indexOf('function ResponseBadgeSummary', responseButtonStart);
+    const responseButtonBlock = manageSource.slice(responseButtonStart, responseButtonEnd);
+    const responseChoiceStylesStart = manageSource.indexOf('responseChoiceButton:');
+    const responseChoiceStylesEnd = manageSource.indexOf('responseChoiceText:', responseChoiceStylesStart);
+    const responseChoiceStylesBlock = manageSource.slice(responseChoiceStylesStart, responseChoiceStylesEnd);
 
-    expect(responseChoiceStart).toBeGreaterThan(-1);
-    expect(responseChoiceEnd).toBeGreaterThan(responseChoiceStart);
-    expect(responseChoiceBlock).toContain('backgroundColor: palette.amberSoft');
-    expect(responseChoiceBlock).not.toContain('backgroundColor: palette.surface');
+    expect(responseButtonStart).toBeGreaterThan(-1);
+    expect(responseButtonEnd).toBeGreaterThan(responseButtonStart);
+    expect(responseButtonBlock).toContain("choice === 'YES' ? styles.responseChoiceYesButton : styles.responseChoiceNoButton");
+    expect(responseButtonBlock).toContain("choice === 'YES' ? styles.selectedResponseChoiceYesButton : styles.selectedResponseChoiceNoButton");
+    expect(responseChoiceStylesBlock).toContain('responseChoiceYesButton:');
+    expect(responseChoiceStylesBlock).toContain('backgroundColor: palette.mintSoft');
+    expect(responseChoiceStylesBlock).toContain('responseChoiceNoButton:');
+    expect(responseChoiceStylesBlock).toContain('backgroundColor: palette.coralSoft');
+    expect(responseChoiceStylesBlock).toContain('selectedResponseChoiceYesButton:');
+    expect(responseChoiceStylesBlock).toContain('backgroundColor: palette.mint');
+    expect(responseChoiceStylesBlock).toContain('selectedResponseChoiceNoButton:');
+    expect(responseChoiceStylesBlock).toContain('backgroundColor: palette.danger');
+    expect(responseChoiceStylesBlock).not.toContain('backgroundColor: palette.surface');
+  });
+
+  it('uses the same accept and reject color language on friend requests and auth copy', () => {
+    const friendsSource = readAppFile('app/(tabs)/friends.tsx');
+    const authCallbackSource = readAppFile('app/auth/callback.tsx');
+
+    expect(friendsSource).toContain('style={styles.acceptActionButton}');
+    expect(friendsSource).toContain('acceptActionButton:');
+    expect(friendsSource).toContain('backgroundColor: palette.mint');
+    expect(friendsSource).toContain('variant="danger"');
+    expect(authCallbackSource).toContain('계정 연결을 마무리하고 있어요. 잠시만 기다려 주세요.');
+    expect(authCallbackSource).not.toContain('Supabase 계정');
   });
 });
 
@@ -677,6 +847,7 @@ describe('received card reply UI', () => {
   it('checks social notifications immediately before slower reminder refresh work', () => {
     const source = readAppFile('hooks/useAppNotifications.ts');
 
+    expect(source).toContain('ensureDefaultAppNotificationEnabled');
     expect(source).toContain('async function refreshSocialNotificationsImmediately()');
     expect(source).toContain('await checkSocialNotifications();');
     expect(source).toContain('void refreshEnabledNotifications();');

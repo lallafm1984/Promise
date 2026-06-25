@@ -4,9 +4,10 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { AlertTriangle, Link2, Send, Trash2, UsersRound, X } from 'lucide-react-native';
 import { Modal, Share, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { DraftPreviewCard, ManagedCardsSection } from '@/components/card-menu';
 import { ActionButton, AppScreen, Card } from '@/components/ui';
-import { palette, radius, spacing } from '@/constants/theme';
+import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
 import { useManagedCards } from '@/hooks/useManagedCards';
 import {
@@ -801,7 +802,7 @@ export default function ManageCardsScreen() {
   const routeScrollKey = Array.isArray(scroll) ? scroll[0] : scroll;
 
   return (
-    <AppScreen reserveBottomTabs scrollToTopKey={routeScrollKey}>
+    <AppScreen footer={<BottomBannerAd />} reserveBottomTabs scrollToTopKey={routeScrollKey}>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -1276,11 +1277,13 @@ export default function ManageCardsScreen() {
                       {canRespond ? (
                         <View style={styles.responseChoiceRow}>
                           <ResponseChoiceButton
+                            choice="YES"
                             label="가능"
                             selected={responseChoices[candidate.id] === 'YES'}
                             onPress={() => setCandidateChoice(candidate.id, 'YES')}
                           />
                           <ResponseChoiceButton
+                            choice="NO"
                             label="어려움"
                             selected={responseChoices[candidate.id] === 'NO'}
                             onPress={() => setCandidateChoice(candidate.id, 'NO')}
@@ -1336,10 +1339,12 @@ export default function ManageCardsScreen() {
 }
 
 function ResponseChoiceButton({
+  choice,
   label,
   selected,
   onPress,
 }: {
+  choice: SelectableResponseChoice;
   label: string;
   selected: boolean;
   onPress: () => void;
@@ -1349,7 +1354,12 @@ function ResponseChoiceButton({
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
-      style={({ pressed }) => [styles.responseChoiceButton, selected && styles.selectedResponseChoiceButton, pressed && styles.pressed]}>
+      style={({ pressed }) => [
+        styles.responseChoiceButton,
+        choice === 'YES' ? styles.responseChoiceYesButton : styles.responseChoiceNoButton,
+        selected && (choice === 'YES' ? styles.selectedResponseChoiceYesButton : styles.selectedResponseChoiceNoButton),
+        pressed && styles.pressed,
+      ]}>
       <Text style={[styles.responseChoiceText, selected && styles.selectedResponseChoiceText]}>{label}</Text>
     </Pressable>
   );
@@ -1381,9 +1391,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     flexDirection: 'row',
     gap: spacing.md,
-    minHeight: 132,
+    minHeight: compactHero.minHeight,
     overflow: 'hidden',
-    padding: spacing.lg,
+    paddingHorizontal: compactHero.paddingHorizontal,
+    paddingVertical: compactHero.paddingVertical,
   },
   headerCopy: {
     flex: 1,
@@ -1425,15 +1436,15 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.ink,
-    fontSize: 28,
+    fontSize: compactHero.titleSize,
     fontWeight: '900',
-    lineHeight: 35,
+    lineHeight: compactHero.titleLineHeight,
   },
   subtitle: {
     color: palette.inkMuted,
-    fontSize: 14,
-    fontWeight: '800',
-    lineHeight: 20,
+    fontSize: compactHero.subtitleSize,
+    fontWeight: '700',
+    lineHeight: compactHero.subtitleLineHeight,
   },
   noticeCard: {
     backgroundColor: palette.amberSoft,
@@ -1786,7 +1797,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     alignItems: 'center',
-    backgroundColor: 'rgba(40, 32, 24, 0.32)',
+    backgroundColor: modalOverlay.backdrop,
     flex: 1,
     justifyContent: 'center',
     padding: spacing.lg,
@@ -2261,7 +2272,6 @@ const styles = StyleSheet.create({
   },
   responseChoiceButton: {
     alignItems: 'center',
-    backgroundColor: palette.amberSoft,
     borderColor: palette.lineStrong,
     borderRadius: radius.sm,
     borderWidth: 1.5,
@@ -2271,8 +2281,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.sm,
   },
-  selectedResponseChoiceButton: {
-    backgroundColor: palette.primary,
+  responseChoiceYesButton: {
+    backgroundColor: palette.mintSoft,
+  },
+  responseChoiceNoButton: {
+    backgroundColor: palette.coralSoft,
+  },
+  selectedResponseChoiceYesButton: {
+    backgroundColor: palette.mint,
+  },
+  selectedResponseChoiceNoButton: {
+    backgroundColor: palette.danger,
   },
   responseChoiceText: {
     color: palette.ink,

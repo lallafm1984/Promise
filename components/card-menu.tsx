@@ -124,12 +124,18 @@ function ModeOption({
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
-      style={({ pressed }) => [styles.modeOption, selected && styles.selectedModeOption, pressed && styles.pressed]}>
+      style={({ pressed }) => [
+        styles.modeOption,
+        selected && styles.selectedModeOption,
+        pressed && styles.pressed,
+      ]}>
       <View style={[styles.modeIcon, selected && styles.selectedModeIcon]}>{icon}</View>
       <Text style={[styles.modeTitle, selected && styles.selectedModeText]} numberOfLines={2}>
         {title}
       </Text>
-      <Text style={[styles.modeDescription, selected && styles.selectedModeText]}>{description}</Text>
+      <Text style={[styles.modeDescription, selected && styles.selectedModeText]}>
+        {description}
+      </Text>
     </Pressable>
   );
 }
@@ -631,7 +637,7 @@ const styles = StyleSheet.create({
     color: palette.inkMuted,
     flexShrink: 1,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '700',
     lineHeight: 17,
   },
   selectedModeText: {

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Clock3, Search, Trash2, UserPlus, UsersRound, X } from 'lucide-react-native';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { ActionButton, AppScreen, Card, SectionHeader } from '@/components/ui';
-import { palette, radius, spacing } from '@/constants/theme';
+import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
 import { normalizeFriendHandle, type AppFriend, type FriendRequest } from '@/lib/friends';
 
@@ -159,7 +160,7 @@ export default function FriendsScreen() {
 
   return (
     <>
-      <AppScreen reserveBottomTabs>
+      <AppScreen footer={<BottomBannerAd />} reserveBottomTabs>
         <View style={styles.header}>
           <View style={styles.headerShapePrimary} />
           <View style={styles.headerShapeMint} />
@@ -398,7 +399,14 @@ function FriendRequestRow({
       </View>
       {request.message ? <Text style={styles.requestMessage}>{request.message}</Text> : null}
       <View style={styles.rowActions}>
-        <ActionButton label="수락" icon={<Check size={17} color={palette.onLight} />} fullWidth onPress={onAccept} />
+        <ActionButton
+          label="수락"
+          icon={<Check size={17} color={palette.onLight} />}
+          fullWidth
+          labelStyle={styles.acceptActionLabel}
+          style={styles.acceptActionButton}
+          onPress={onAccept}
+        />
         <ActionButton
           label="거절"
           variant="danger"
@@ -625,9 +633,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     flexDirection: 'row',
     gap: spacing.md,
-    minHeight: 136,
+    minHeight: compactHero.minHeight,
     overflow: 'hidden',
-    padding: spacing.lg,
+    paddingHorizontal: compactHero.paddingHorizontal,
+    paddingVertical: compactHero.paddingVertical,
   },
   headerShapePrimary: {
     backgroundColor: palette.primary,
@@ -660,15 +669,15 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.ink,
-    fontSize: 28,
+    fontSize: compactHero.titleSize,
     fontWeight: '900',
-    lineHeight: 35,
+    lineHeight: compactHero.titleLineHeight,
   },
   subtitle: {
     color: palette.inkMuted,
-    fontSize: 13,
-    fontWeight: '800',
-    lineHeight: 19,
+    fontSize: compactHero.subtitleSize,
+    fontWeight: '700',
+    lineHeight: compactHero.subtitleLineHeight,
   },
   summaryRow: {
     flexDirection: 'row',
@@ -679,8 +688,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 2,
     flex: 1,
-    minHeight: 68,
-    padding: spacing.sm,
+    minHeight: 56,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   friendMetric: {
     backgroundColor: palette.limeSoft,
@@ -693,7 +703,7 @@ const styles = StyleSheet.create({
   },
   metricLabel: {
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '800',
   },
   friendMetricLabel: {
     color: palette.primaryDeep,
@@ -705,9 +715,9 @@ const styles = StyleSheet.create({
     color: palette.primaryDeep,
   },
   metricValue: {
-    fontSize: 24,
-    fontWeight: '900',
-    marginTop: 4,
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: 2,
   },
   friendMetricValue: {
     color: palette.primaryDeep,
@@ -884,6 +894,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  acceptActionButton: {
+    backgroundColor: palette.mint,
+  },
+  acceptActionLabel: {
+    color: palette.onLight,
+  },
   pendingBadge: {
     alignItems: 'center',
     backgroundColor: palette.amberSoft,
@@ -948,7 +964,7 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     alignItems: 'center',
-    backgroundColor: 'rgba(75, 52, 40, 0.42)',
+    backgroundColor: modalOverlay.backdrop,
     flex: 1,
     justifyContent: 'center',
     padding: spacing.md,

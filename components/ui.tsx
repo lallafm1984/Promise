@@ -25,6 +25,7 @@ type ButtonVariant = 'primary' | 'secondary' | 'kakao' | 'danger' | 'ghost';
 interface AppScreenProps {
   children: ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
+  footer?: ReactNode;
   keyboardAware?: boolean;
   resetScrollOnFocus?: boolean;
   reserveBottomTabs?: boolean;
@@ -58,6 +59,7 @@ interface StorageModeNoticeProps {
 export function AppScreen({
   children,
   contentStyle,
+  footer,
   keyboardAware,
   resetScrollOnFocus = true,
   reserveBottomTabs = false,
@@ -74,6 +76,7 @@ export function AppScreen({
     bottomInset,
     reserveBottomTabs: Platform.OS !== 'web' && reserveBottomTabs,
   });
+  const hasFooter = Boolean(footer);
 
   const scrollToTop = useCallback(
     (animated = false) => {
@@ -110,14 +113,22 @@ export function AppScreen({
       scrollIndicatorInsets={{ bottom: bottomPadding }}
       contentContainerStyle={[
         styles.screenContent,
+        hasFooter && styles.screenContentWithFooter,
         {
           alignSelf: Platform.OS === 'web' ? 'flex-start' : 'center',
-          paddingBottom: bottomPadding,
+          paddingBottom: hasFooter ? 0 : bottomPadding,
           width: contentWidth,
         },
         contentStyle,
       ]}>
-      {children}
+      {hasFooter ? (
+        <>
+          <View style={styles.screenBody}>{children}</View>
+          <View style={styles.screenFooter}>{footer}</View>
+        </>
+      ) : (
+        children
+      )}
     </ScrollView>
   );
 
@@ -290,6 +301,20 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     width: '100%',
   },
+  screenContentWithFooter: {
+    flexGrow: 1,
+    gap: 0,
+  },
+  screenBody: {
+    flexGrow: 1,
+    gap: spacing.lg,
+    width: '100%',
+  },
+  screenFooter: {
+    alignItems: 'center',
+    marginHorizontal: -spacing.md,
+    marginTop: spacing.lg,
+  },
   sectionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -384,7 +409,7 @@ const styles = StyleSheet.create({
     color: palette.onLight,
   },
   disabledLabel: {
-    color: palette.inkSoft,
+    color: palette.inkDisabled,
   },
   chip: {
     alignSelf: 'flex-start',

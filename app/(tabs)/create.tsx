@@ -21,10 +21,12 @@ import {
   DraftPreviewCard,
   ModeSelector,
 } from '@/components/card-menu';
+import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { ActionButton, AppScreen, Card } from '@/components/ui';
-import { palette, radius, spacing } from '@/constants/theme';
+import { modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
 import { useManagedCards } from '@/hooks/useManagedCards';
+import { requestInterstitialAd } from '@/lib/interstitialAds';
 import {
   buildShareMessage,
   CARD_RESPONSE_WINDOW_NOTICE,
@@ -62,12 +64,13 @@ import type { AppointmentMode, PromiseCard } from '@/types/promise';
 const INITIAL_DRAFT: CardDraft = {
   ...createDefaultCardDraft(),
 };
-const MODAL_BACKDROP_COLOR = 'rgba(75, 52, 40, 0.42)';
+const MODAL_BACKDROP_COLOR = modalOverlay.backdrop;
 const CARD_BASE_URL = (process.env.EXPO_PUBLIC_CARD_BASE_URL ?? 'https://whenbollae.app').replace(/\/+$/, '');
 
 export default function CreateCardScreen() {
   const router = useRouter();
-  const { height: windowHeight } = useWindowDimensions();
+  const { fontScale, height: windowHeight, width } = useWindowDimensions();
+  const isLargeTextLayout = fontScale >= 1.2 || width < 380;
   const screenScrollRef = useRef<ScrollView>(null);
   const messageInputRef = useRef<TextInput>(null);
   const { addManagedCard } = useManagedCards();
@@ -191,6 +194,7 @@ export default function CreateCardScreen() {
     setIsFriendPickerOpen(false);
     setSelectedFriendIds([]);
     setFeedback(null);
+    void requestInterstitialAd('card_create_pressed');
   }
 
   async function publishPreview(card: PromiseCard) {
@@ -505,11 +509,11 @@ export default function CreateCardScreen() {
 
   return (
     <>
-      <AppScreen keyboardAware reserveBottomTabs scrollRef={screenScrollRef}>
-      <View style={styles.header}>
-        <View style={styles.headerShapePrimary} />
-        <View style={styles.headerShapeMint} />
-        <View style={styles.headerShapeLime} />
+      <AppScreen footer={<BottomBannerAd />} keyboardAware reserveBottomTabs scrollRef={screenScrollRef}>
+      <View style={[styles.header, isLargeTextLayout && styles.largeTextHeader]}>
+        <View style={[styles.headerShapePrimary, isLargeTextLayout && styles.largeTextHeaderShapePrimary]} />
+        <View style={[styles.headerShapeMint, isLargeTextLayout && styles.largeTextHeaderShapeMint]} />
+        <View style={[styles.headerShapeLime, isLargeTextLayout && styles.largeTextHeaderShapeLime]} />
         <View style={styles.headerCopy}>
           <Text style={styles.kicker}>언제볼래</Text>
           <Text style={styles.title}>카드 만들기</Text>
@@ -703,6 +707,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     padding: spacing.lg,
   },
+  largeTextHeader: {
+    alignItems: 'flex-start',
+    minHeight: 148,
+    paddingRight: spacing.xxl,
+  },
   headerCopy: {
     flex: 1,
     gap: spacing.xs,
@@ -719,6 +728,12 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '-18deg' }],
     width: 116,
   },
+  largeTextHeaderShapePrimary: {
+    height: 70,
+    right: -34,
+    top: 8,
+    width: 104,
+  },
   headerShapeMint: {
     backgroundColor: palette.aqua,
     bottom: -28,
@@ -727,6 +742,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     transform: [{ rotate: '22deg' }],
     width: 88,
+  },
+  largeTextHeaderShapeMint: {
+    bottom: -72,
+    height: 72,
+    left: -48,
+    width: 68,
   },
   headerShapeLime: {
     backgroundColor: palette.lime,
@@ -737,6 +758,10 @@ const styles = StyleSheet.create({
     top: -10,
     transform: [{ rotate: '0deg' }],
     width: 42,
+  },
+  largeTextHeaderShapeLime: {
+    right: 88,
+    top: -20,
   },
   kicker: {
     color: palette.primaryDeep,
@@ -752,7 +777,7 @@ const styles = StyleSheet.create({
   subtitle: {
     color: palette.inkMuted,
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '700',
     lineHeight: 20,
   },
   formCard: {

@@ -8,6 +8,7 @@ export const palette = {
   ink: '#4B3428',
   inkMuted: '#846A58',
   inkSoft: '#B9987F',
+  inkDisabled: '#6F5748',
   onLight: '#3A2B24',
   line: '#E8C6A5',
   lineStrong: '#AA695B',
@@ -54,4 +55,18 @@ export const radius = {
 export const shadow = {
   boxShadow: '4px 6px 0px rgba(170, 105, 91, 0.18)',
   elevation: 2,
+};
+
+export const compactHero = {
+  minHeight: 104,
+  paddingHorizontal: spacing.md,
+  paddingVertical: spacing.md,
+  titleSize: 24,
+  titleLineHeight: 30,
+  subtitleSize: 13,
+  subtitleLineHeight: 18,
+};
+
+export const modalOverlay = {
+  backdrop: 'rgba(75, 52, 40, 0.58)',
 };

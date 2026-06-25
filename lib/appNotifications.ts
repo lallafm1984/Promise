@@ -109,7 +109,7 @@ async function getStoredAppNotificationEnabled() {
   return value === null ? null : value === 'true';
 }
 
-export async function ensureAppNotificationEnabledForGrantedPermission() {
+async function resolveAppNotificationEnabledDefault(requestIfUndetermined: boolean) {
   const storedEnabled = await getStoredAppNotificationEnabled();
 
   if (storedEnabled !== null) {
@@ -120,14 +120,28 @@ export async function ensureAppNotificationEnabledForGrantedPermission() {
     return false;
   }
 
-  const permission = await Notifications.getPermissionsAsync();
+  let permission = await Notifications.getPermissionsAsync();
 
-  if (permission.status !== 'granted') {
-    return false;
+  if (requestIfUndetermined && permission.status === 'undetermined') {
+    await configureAppNotifications();
+    permission = await Notifications.requestPermissionsAsync();
   }
 
-  await setAppNotificationEnabled(true);
-  return true;
+  const enabled = permission.status === 'granted';
+
+  if (enabled || requestIfUndetermined) {
+    await setAppNotificationEnabled(enabled);
+  }
+
+  return enabled;
+}
+
+export async function ensureAppNotificationEnabledForGrantedPermission() {
+  return resolveAppNotificationEnabledDefault(false);
+}
+
+export async function ensureDefaultAppNotificationEnabled() {
+  return resolveAppNotificationEnabledDefault(true);
 }
 
 function getSocialNotificationStorageKeys(accountId: string | null) {
@@ -646,6 +660,7 @@ async function checkSocialNotificationsOnce() {
     rawSeenCardIds,
     rawSeenCardResponseFingerprints,
     rawSeenCardConfirmationFingerprints,
+    registeredPushToken,
   ] = await Promise.all([
     friendRepository.listFriendState(),
     promiseRepository.listReceivedCardAlerts(),
@@ -656,6 +671,7 @@ async function checkSocialNotificationsOnce() {
     AsyncStorage.getItem(seenKeys.seenCardIds),
     AsyncStorage.getItem(seenKeys.seenCardResponseFingerprints),
     AsyncStorage.getItem(seenKeys.seenCardConfirmationFingerprints),
+    AsyncStorage.getItem(EXPO_PUSH_TOKEN_KEY),
   ]);
   const incomingRequestIds = friendState.requests
     .filter((request) => request.direction === 'INCOMING')
@@ -666,17 +682,20 @@ async function checkSocialNotificationsOnce() {
   const receivedConfirmedCards = getReceivedConfirmedScheduleCards(recentCards, new Date(), profile);
   const currentConfirmationFingerprints =
     getManagedCardConfirmationNoticeFingerprints(receivedConfirmedCards);
+  const currentCardIds = receivedCards.map((card) => card.id);
 
-  const seenRequestIds = rawSeenRequestIds === null ? [] : readJsonArray(rawSeenRequestIds);
+  const seenRequestIds = rawSeenRequestIds === null ? incomingRequestIds : readJsonArray(rawSeenRequestIds);
   const seenFriendIds = rawSeenFriendIds === null ? friendIds : readJsonArray(rawSeenFriendIds);
-  const seenCardIds = rawSeenCardIds === null ? [] : readJsonArray(rawSeenCardIds);
-  // Initial baseline seeding happens when the user enables notifications. If this
-  // runtime state is missing later, do not swallow the first realtime card event.
+  const seenCardIds = rawSeenCardIds === null ? currentCardIds : readJsonArray(rawSeenCardIds);
   const seenCardResponseFingerprints =
-    rawSeenCardResponseFingerprints === null ? [] : readJsonArray(rawSeenCardResponseFingerprints);
+    rawSeenCardResponseFingerprints === null
+      ? currentResponseFingerprints
+      : readJsonArray(rawSeenCardResponseFingerprints);
   const seenCardResponseFingerprintSet = new Set(seenCardResponseFingerprints);
   const seenCardConfirmationFingerprints =
-    rawSeenCardConfirmationFingerprints === null ? [] : readJsonArray(rawSeenCardConfirmationFingerprints);
+    rawSeenCardConfirmationFingerprints === null
+      ? currentConfirmationFingerprints
+      : readJsonArray(rawSeenCardConfirmationFingerprints);
   const seenCardConfirmationFingerprintSet = new Set(seenCardConfirmationFingerprints);
   const newRequests = getNewIncomingFriendRequests(seenRequestIds, friendState.requests);
   const newAcceptedFriends = getNewAcceptedFriends(seenFriendIds, friendState.friends);
@@ -690,13 +709,15 @@ async function checkSocialNotificationsOnce() {
     ),
   );
 
-  await Promise.all([
-    ...newRequests.map((request) => presentAppNotification(buildFriendRequestNotification(request))),
-    ...newAcceptedFriends.map((friend) => presentAppNotification(buildFriendAcceptedNotification(friend))),
-    ...newCards.map((card) => presentAppNotification(buildCardReceivedNotification(card))),
-    ...newResponseCards.map((card) => presentAppNotification(buildCardResponseReceivedNotification(card))),
-    ...newConfirmedCards.map((card) => presentAppNotification(buildCardConfirmedNotification(card))),
-  ]);
+  if (!registeredPushToken) {
+    await Promise.all([
+      ...newRequests.map((request) => presentAppNotification(buildFriendRequestNotification(request))),
+      ...newAcceptedFriends.map((friend) => presentAppNotification(buildFriendAcceptedNotification(friend))),
+      ...newCards.map((card) => presentAppNotification(buildCardReceivedNotification(card))),
+      ...newResponseCards.map((card) => presentAppNotification(buildCardResponseReceivedNotification(card))),
+      ...newConfirmedCards.map((card) => presentAppNotification(buildCardConfirmedNotification(card))),
+    ]);
+  }
 
   await Promise.all([
     writeJsonArray(
@@ -706,7 +727,7 @@ async function checkSocialNotificationsOnce() {
     writeJsonArray(seenKeys.seenFriendIds, friendIds),
     writeJsonArray(
       seenKeys.seenCardIds,
-      receivedCards.map((card) => card.id),
+      currentCardIds,
     ),
     writeJsonArray(seenKeys.seenCardResponseFingerprints, currentResponseFingerprints),
     writeJsonArray(seenKeys.seenCardConfirmationFingerprints, currentConfirmationFingerprints),

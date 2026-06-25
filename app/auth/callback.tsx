@@ -75,7 +75,7 @@ export default function AuthCallbackScreen() {
         </View>
         <Text style={styles.title}>{error ? '로그인을 다시 확인해 주세요' : '로그인 처리 중'}</Text>
         <Text style={styles.body}>
-          {error ?? 'Supabase 계정 연결을 마무리하고 있어요. 잠시만 기다려 주세요.'}
+          {error ?? '계정 연결을 마무리하고 있어요. 잠시만 기다려 주세요.'}
         </Text>
         {error ? (
           <ActionButton label="로그인으로 돌아가기" fullWidth onPress={() => router.replace('/login' as never)} />

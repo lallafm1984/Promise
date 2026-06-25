@@ -1,0 +1,35 @@
+allprojects { project ->
+    project.plugins.withId("com.android.application") {
+        def androidComponents = project.extensions.findByName("androidComponents")
+        if (androidComponents == null) {
+            throw new GradleException("Android Components extension was not found for ${project.path}")
+        }
+
+        androidComponents.finalizeDsl { androidExt ->
+            def requiredEnv = { name ->
+                def value = System.getenv(name)
+                if (value == null || value.trim().isEmpty()) {
+                    throw new GradleException("Missing required signing environment value: ${name}")
+                }
+                return value
+            }
+
+            def uploadStoreFile = requiredEnv("PROMISE_UPLOAD_STORE_FILE")
+            def uploadStorePassword = requiredEnv("PROMISE_UPLOAD_STORE_PASSWORD")
+            def uploadKeyAlias = requiredEnv("PROMISE_UPLOAD_KEY_ALIAS")
+            def uploadKeyPassword = requiredEnv("PROMISE_UPLOAD_KEY_PASSWORD")
+
+            def signingConfig = androidExt.signingConfigs.findByName("promiseUpload")
+            if (signingConfig == null) {
+                signingConfig = androidExt.signingConfigs.create("promiseUpload")
+            }
+
+            signingConfig.storeFile = new File(uploadStoreFile)
+            signingConfig.storePassword = uploadStorePassword
+            signingConfig.keyAlias = uploadKeyAlias
+            signingConfig.keyPassword = uploadKeyPassword
+
+            androidExt.buildTypes.getByName("release").signingConfig = signingConfig
+        }
+    }
+}

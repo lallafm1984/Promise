@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
-import { useAppNotificationRuntime } from '@/hooks/useAppNotifications';
+import { useAppNotificationRuntime, useInitialNotificationPermissionPrompt } from '@/hooks/useAppNotifications';
 import { useSupabaseAuth } from '@/hooks/useSupabaseAuth';
 import { getMandatoryAuthGateState } from '@/lib/authGate';
 import { createSessionFromUrl, isAuthCallbackUrl } from '@/lib/supabaseAuth';
@@ -48,6 +48,7 @@ function RootLayoutNav() {
   const { isAuthenticated, isLoading } = useSupabaseAuth();
   const authGate = getMandatoryAuthGateState({ isAuthenticated, isLoading });
   useAppNotificationRuntime();
+  useInitialNotificationPermissionPrompt({ enabled: authGate.canHideSplash });
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -67,7 +68,7 @@ function RootLayoutNav() {
         void createSessionFromUrl(url)
           .then((session) => {
             if (session) {
-              router.replace('/profile');
+              router.replace('/schedule');
               return;
             }
 

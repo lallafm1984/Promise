@@ -21,7 +21,6 @@ import {
   DraftPreviewCard,
   ModeSelector,
 } from '@/components/card-menu';
-import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { ActionButton, AppScreen, Card } from '@/components/ui';
 import { modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
@@ -509,7 +508,7 @@ export default function CreateCardScreen() {
 
   return (
     <>
-      <AppScreen footer={<BottomBannerAd />} keyboardAware reserveBottomTabs scrollRef={screenScrollRef}>
+      <AppScreen keyboardAware reserveBottomTabs scrollRef={screenScrollRef}>
       <View style={[styles.header, isLargeTextLayout && styles.largeTextHeader]}>
         <View style={[styles.headerShapePrimary, isLargeTextLayout && styles.largeTextHeaderShapePrimary]} />
         <View style={[styles.headerShapeMint, isLargeTextLayout && styles.largeTextHeaderShapeMint]} />

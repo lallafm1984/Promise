@@ -13,6 +13,7 @@
     },
     "android": {
       "package": "com.lim.whenbollae",
+      "versionCode": 6,
       "permissions": [
         "SCHEDULE_EXACT_ALARM"
       ],
@@ -43,7 +44,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/icon.png",
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }

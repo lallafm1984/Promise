@@ -765,8 +765,8 @@ describe('app notification registration', () => {
         candidates: [
           {
             id: 'slot-1',
-            startsAt: '2026-06-25T19:00:00',
-            endsAt: '2026-06-25T20:00:00',
+            startsAt: '2099-06-25T19:00:00',
+            endsAt: '2099-06-25T20:00:00',
             label: 'Jun 25',
             shortLabel: 'Jun 25',
             summary: { yes: 1, maybe: 0, no: 0, unanswered: 0 },

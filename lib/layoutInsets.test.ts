@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { getAppScreenBottomPadding, getNativeBottomInset, getTabBarHeight } from './layoutInsets';
+import {
+  BOTTOM_BANNER_AD_HEIGHT,
+  TAB_SCREEN_VISIBLE_GAP_RATIO_AFTER_REDUCTION,
+  getAppScreenBottomPadding,
+  getNativeBottomInset,
+  getTabBarHeight,
+} from './layoutInsets';
 
 describe('layout insets', () => {
   it('keeps a minimum native bottom inset for devices without gesture safe area', () => {
@@ -8,9 +14,12 @@ describe('layout insets', () => {
     expect(getNativeBottomInset(24)).toBe(24);
   });
 
-  it('reserves bottom-tab height for scrollable tab screens', () => {
+  it('keeps the banner clear while halving the visible gap above it', () => {
     expect(getTabBarHeight(16)).toBe(88);
-    expect(getAppScreenBottomPadding({ bottomInset: 16, reserveBottomTabs: false })).toBe(40);
-    expect(getAppScreenBottomPadding({ bottomInset: 16, reserveBottomTabs: true })).toBe(112);
+    expect(getAppScreenBottomPadding({ bottomInset: 16, reserveBottomTabs: false })).toBeCloseTo(19.6);
+    expect(getAppScreenBottomPadding({ bottomInset: 16, reserveBottomTabs: true })).toBeCloseTo(
+      BOTTOM_BANNER_AD_HEIGHT +
+        (getTabBarHeight(16) + 2.4) * TAB_SCREEN_VISIBLE_GAP_RATIO_AFTER_REDUCTION,
+    );
   });
 });

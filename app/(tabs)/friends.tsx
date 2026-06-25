@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Clock3, Search, Trash2, UserPlus, UsersRound, X } from 'lucide-react-native';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { ActionButton, AppScreen, Card, SectionHeader } from '@/components/ui';
 import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { useFriends } from '@/hooks/useFriends';
@@ -160,7 +159,7 @@ export default function FriendsScreen() {
 
   return (
     <>
-      <AppScreen footer={<BottomBannerAd />} reserveBottomTabs>
+      <AppScreen reserveBottomTabs>
         <View style={styles.header}>
           <View style={styles.headerShapePrimary} />
           <View style={styles.headerShapeMint} />

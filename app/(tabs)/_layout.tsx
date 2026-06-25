@@ -3,11 +3,12 @@ import { Tabs } from 'expo-router';
 import { Platform, StyleSheet, View, type ColorValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { GlobalResponseNotice } from '@/components/global-response-notice';
 import { palette } from '@/constants/theme';
 import { FriendsProvider } from '@/hooks/useFriends';
 import { SchedulePlannerProvider } from '@/hooks/useSchedulePlanner';
-import { getNativeBottomInset, getTabBarHeight } from '@/lib/layoutInsets';
+import { BOTTOM_BANNER_AD_HEIGHT, getNativeBottomInset, getTabBarHeight } from '@/lib/layoutInsets';
 
 function tabIcon(Icon: LucideIcon) {
   return function TabIcon({ color, size }: { color: ColorValue; size: number }) {
@@ -24,7 +25,7 @@ export default function TabLayout() {
       <FriendsProvider>
         <View style={styles.shell}>
           <Tabs
-            initialRouteName="create"
+            initialRouteName="schedule"
             screenOptions={{
               headerShown: false,
               tabBarActiveTintColor: palette.primary,
@@ -86,6 +87,11 @@ export default function TabLayout() {
               }}
             />
           </Tabs>
+          {Platform.OS !== 'web' ? (
+            <View pointerEvents="box-none" style={[styles.commonBanner, { bottom: getTabBarHeight(bottomInset) }]}>
+              <BottomBannerAd />
+            </View>
+          ) : null}
           <GlobalResponseNotice />
         </View>
       </FriendsProvider>
@@ -96,5 +102,14 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   shell: {
     flex: 1,
+  },
+  commonBanner: {
+    alignItems: 'center',
+    elevation: 4,
+    height: BOTTOM_BANNER_AD_HEIGHT,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    zIndex: 5,
   },
 });

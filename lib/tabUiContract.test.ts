@@ -11,6 +11,7 @@ describe('bottom tab UI contract', () => {
   it('keeps app icon assets and portrait orientation wired into config and Android', () => {
     const appConfig = JSON.parse(readAppFile('app.json')).expo;
     const notificationPlugin = appConfig.plugins.find((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-notifications');
+    const splashPlugin = appConfig.plugins.find((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-splash-screen');
     const androidManifest = readAppFile('android/app/src/main/AndroidManifest.xml');
 
     expect(appConfig.icon).toBe('./assets/images/icon.png');
@@ -23,6 +24,11 @@ describe('bottom tab UI contract', () => {
     expect(notificationPlugin?.[1]).toMatchObject({
       icon: './assets/images/android-icon-monochrome.png',
       color: '#FD6572',
+    });
+    expect(splashPlugin?.[1]).toMatchObject({
+      image: './assets/images/icon.png',
+      resizeMode: 'contain',
+      backgroundColor: '#ffffff',
     });
     expect(androidManifest).toContain('android:screenOrientation="portrait"');
   });
@@ -38,6 +44,18 @@ describe('bottom tab UI contract', () => {
     expect(appGradle).toContain('com.google.gms.google-services');
   });
 
+  it('loads the native AdMob app id from .env before using the Google test fallback', () => {
+    const appConfigSource = readAppFile('app.config.js');
+    const appGradle = readAppFile('android/app/build.gradle');
+    const dotEnvFallbackIndex = appGradle.indexOf('readDotEnvValue("ADMOB_ANDROID_APP_ID")');
+    const testFallbackIndex = appGradle.indexOf('ca-app-pub-3940256099942544~3347511713');
+
+    expect(appConfigSource).toContain('process.env.ADMOB_ANDROID_APP_ID || GOOGLE_TEST_ANDROID_APP_ID');
+    expect(appGradle).toContain('def readDotEnvValue = { String key ->');
+    expect(dotEnvFallbackIndex).toBeGreaterThan(-1);
+    expect(testFallbackIndex).toBeGreaterThan(dotEnvFallbackIndex);
+  });
+
   it('keeps visible bottom tabs in the requested product order', () => {
     const source = readAppFile('app/(tabs)/_layout.tsx');
     const visibleScreens = Array.from(source.matchAll(/<Tabs\.Screen\s+name="([^"]+)"/g))
@@ -47,25 +65,51 @@ describe('bottom tab UI contract', () => {
     expect(visibleScreens).toEqual(['create', 'manage', 'schedule', 'friends', 'profile']);
   });
 
-  it('places banner ads in tab page footers without page padding below them', () => {
+  it('opens schedule by default for normal app entry and login completion', () => {
+    const tabsLayoutSource = readAppFile('app/(tabs)/_layout.tsx');
+    const tabsIndexSource = readAppFile('app/(tabs)/index.tsx');
+    const loginSource = readAppFile('app/login.tsx');
+    const rootLayoutSource = readAppFile('app/_layout.tsx');
+
+    expect(tabsLayoutSource).toContain('initialRouteName="schedule"');
+    expect(tabsIndexSource).toContain('<Redirect href="/schedule" />');
+    expect(loginSource).toContain('<Redirect href="/schedule" />');
+    expect(loginSource).toContain("router.replace('/schedule');");
+    expect(rootLayoutSource).toContain("router.replace('/schedule');");
+  });
+
+  it('keeps one shared banner ad above the bottom tab menu', () => {
     const layoutSource = readAppFile('app/(tabs)/_layout.tsx');
     const uiSource = readAppFile('components/ui.tsx');
-    const tabScreens = ['create', 'manage', 'schedule', 'friends', 'profile'];
+    const layoutInsetsSource = readAppFile('lib/layoutInsets.ts');
+    const bannerTabs = ['create', 'manage', 'friends', 'profile', 'schedule'];
 
-    expect(layoutSource).not.toContain('BottomBannerAd');
-    expect(uiSource).toContain('footer?: ReactNode;');
-    expect(uiSource).toContain('paddingBottom: hasFooter ? 0 : bottomPadding');
-    expect(uiSource).toContain('hasFooter && styles.screenContentWithFooter');
-    expect(uiSource).toContain('<View style={styles.screenBody}>{children}</View>');
-    expect(uiSource).toContain('<View style={styles.screenFooter}>{footer}</View>');
-    expect(uiSource).toContain('screenContentWithFooter:');
-    expect(uiSource).toContain('flexGrow: 1');
+    expect(layoutSource).toContain("import { BottomBannerAd } from '@/components/bottom-banner-ad';");
+    expect(layoutSource).toContain('BOTTOM_BANNER_AD_HEIGHT');
+    expect(layoutSource).toContain('<BottomBannerAd />');
+    expect(layoutSource).toContain('styles.commonBanner');
+    expect(layoutSource).toContain('bottom: getTabBarHeight(bottomInset)');
+    expect(layoutInsetsSource).toContain(
+      'BOTTOM_BANNER_AD_HEIGHT +',
+    );
+    expect(layoutInsetsSource).toContain(
+      '(getTabBarHeight(bottomInset) + spacing.xs * PREVIOUS_BOTTOM_EXTRA_GAP_RATIO) *',
+    );
+    expect(layoutInsetsSource).toContain(
+      'TAB_SCREEN_VISIBLE_GAP_RATIO_AFTER_REDUCTION',
+    );
+    expect(layoutInsetsSource).toContain(
+      'bottomInset + spacing.xl * BOTTOM_EXTRA_GAP_RATIO_AFTER_REDUCTION',
+    );
+    expect(uiSource).not.toContain('footer?: ReactNode;');
+    expect(uiSource).not.toContain('screenContentWithFooter');
+    expect(uiSource).not.toContain('screenFooter');
 
-    for (const tab of tabScreens) {
+    for (const tab of bannerTabs) {
       const source = readAppFile(`app/(tabs)/${tab}.tsx`);
 
-      expect(source).toContain("import { BottomBannerAd } from '@/components/bottom-banner-ad';");
-      expect(source).toContain('footer={<BottomBannerAd />}');
+      expect(source).not.toContain("import { BottomBannerAd } from '@/components/bottom-banner-ad';");
+      expect(source).not.toContain('footer={<BottomBannerAd />}');
       expect(source).not.toMatch(/<BottomBannerAd \/>\s*<\/AppScreen>/);
     }
   });
@@ -185,6 +229,9 @@ describe('schedule and friends surface notices', () => {
     expect(manualBranch).toContain('styles.cardScheduleCard');
     expect(manualBranch).toContain('styles.manualScheduleCard');
     expect(manualBranch).toContain('styles.cardScheduleInfoRow');
+    expect(cardBranch).not.toContain('<Chip label="약속 카드"');
+    expect(manualBranch).not.toContain('<Chip label="직접 추가"');
+    expect(scheduleSource).toContain('manualScheduleActionGroup:');
     expect(manualBranch).not.toContain('manualDateBlock');
   });
 
@@ -250,29 +297,41 @@ describe('schedule and friends surface notices', () => {
     expect(todoPanelBlock).not.toContain('개 남음');
   });
 
-  it('fits the schedule composer in one modal screen without internal scrolling', () => {
+  it('keeps the schedule composer actions visible when the form needs to scroll', () => {
     const scheduleSource = readAppFile('app/(tabs)/schedule.tsx');
     const modalStart = scheduleSource.indexOf('function ComposerModal');
     const modalEnd = scheduleSource.indexOf('function ColorPicker', modalStart);
     const modalBlock = scheduleSource.slice(modalStart, modalEnd);
-    const formIndex = modalBlock.indexOf('style={styles.scheduleComposerForm}');
+    const formScrollIndex = modalBlock.indexOf('style={styles.scheduleComposerFormScroll}');
+    const formScrollEndIndex = modalBlock.indexOf('</ScrollView>', formScrollIndex);
+    const formIndex = modalBlock.indexOf('contentContainerStyle={styles.scheduleComposerForm}');
     const footerIndex = modalBlock.indexOf('style={styles.scheduleComposerFooter}');
     const submitIndex = modalBlock.indexOf('styles.modalSubmitButton');
 
     expect(modalStart).toBeGreaterThan(-1);
     expect(modalEnd).toBeGreaterThan(modalStart);
-    expect(modalBlock).not.toContain('<ScrollView');
+    expect(modalBlock).toContain('<KeyboardAvoidingView');
+    expect(modalBlock).toContain('style={styles.scheduleComposerKeyboardAvoider}');
+    expect(modalBlock).toContain('styles.modalBackdropTouchable');
+    expect(modalBlock).toContain('<ScrollView');
+    expect(modalBlock).toContain('keyboardShouldPersistTaps="handled"');
+    expect(modalBlock).toContain('nestedScrollEnabled');
     expect(modalBlock).toContain('<CompactScheduleTimeField');
     expect(scheduleSource).toContain('scheduleComposerPanel:');
+    expect(scheduleSource).toContain('scheduleComposerKeyboardAvoider:');
+    expect(scheduleSource).toContain('scheduleComposerFormScroll:');
     expect(scheduleSource).toContain('scheduleComposerForm:');
     expect(scheduleSource).toContain('compactTimeShell:');
     expect(scheduleSource).toContain('compactColorPickerShell:');
     expect(scheduleSource).toContain('scheduleComposerFooter:');
+    expect(formScrollIndex).toBeGreaterThan(-1);
     expect(formIndex).toBeGreaterThan(-1);
-    expect(footerIndex).toBeGreaterThan(formIndex);
+    expect(formScrollEndIndex).toBeGreaterThan(formIndex);
+    expect(footerIndex).toBeGreaterThan(formScrollEndIndex);
     expect(submitIndex).toBeGreaterThan(footerIndex);
-    expect(scheduleSource).toContain("maxHeight: '82%'");
-    expect(scheduleSource).toContain("overflow: 'hidden'");
+    expect(scheduleSource).toContain("maxHeight: '96%'");
+    expect(scheduleSource).toContain('flexShrink: 1');
+    expect(scheduleSource).toContain('minHeight: 0');
   });
 
   it('opens a recurring todo manager from the todo screen', () => {
@@ -672,12 +731,19 @@ describe('create card app friend picker', () => {
 
   it('keeps the app-friend send action on one line in the preview action row', () => {
     const createSource = readAppFile('app/(tabs)/create.tsx');
+    const manageSource = readAppFile('app/(tabs)/manage.tsx');
     const uiSource = readAppFile('components/ui.tsx');
     const appFriendActionStart = createSource.indexOf('label="앱 친구에게 보내기"');
     const appFriendActionEnd = createSource.indexOf('label="링크 복사"', appFriendActionStart);
     const appFriendActionBlock = createSource.slice(appFriendActionStart, appFriendActionEnd);
     const linkActionEnd = createSource.indexOf('onPress={() => {', appFriendActionEnd);
     const linkActionBlock = createSource.slice(appFriendActionEnd, linkActionEnd);
+    const reshareActionsStart = manageSource.indexOf('<View style={styles.previewActions}>');
+    const reshareAppFriendActionStart = manageSource.indexOf('label="앱 친구에게 보내기"', reshareActionsStart);
+    const reshareAppFriendActionEnd = manageSource.indexOf('label="링크 복사"', reshareAppFriendActionStart);
+    const reshareAppFriendActionBlock = manageSource.slice(reshareAppFriendActionStart, reshareAppFriendActionEnd);
+    const reshareLinkActionEnd = manageSource.indexOf('onPress={() => void handleCopyReshareLink()}', reshareAppFriendActionEnd);
+    const reshareLinkActionBlock = manageSource.slice(reshareAppFriendActionEnd, reshareLinkActionEnd);
 
     expect(appFriendActionStart).toBeGreaterThan(-1);
     expect(appFriendActionBlock).toContain('singleLineLabel');
@@ -694,6 +760,16 @@ describe('create card app friend picker', () => {
     expect(createSource).toContain('previewAppFriendButton:');
     expect(createSource).toContain('previewLinkButton:');
     expect(createSource).toContain('previewSecondaryActionLabel:');
+    expect(reshareAppFriendActionStart).toBeGreaterThan(-1);
+    expect(reshareAppFriendActionBlock).toContain('singleLineLabel');
+    expect(reshareAppFriendActionBlock).toContain('style={styles.previewAppFriendButton}');
+    expect(reshareAppFriendActionBlock).toContain('labelStyle={styles.previewSecondaryActionLabel}');
+    expect(reshareLinkActionBlock).toContain('singleLineLabel');
+    expect(reshareLinkActionBlock).toContain('style={styles.previewLinkButton}');
+    expect(reshareLinkActionBlock).toContain('labelStyle={styles.previewSecondaryActionLabel}');
+    expect(manageSource).toContain('previewAppFriendButton:');
+    expect(manageSource).toContain('previewLinkButton:');
+    expect(manageSource).toContain('previewSecondaryActionLabel:');
   });
 
   it('uses a compact, scrollable friend picker instead of the full preview card while choosing app friends', () => {
@@ -769,6 +845,27 @@ describe('received card response choices', () => {
     expect(authCallbackSource).toContain('계정 연결을 마무리하고 있어요. 잠시만 기다려 주세요.');
     expect(authCallbackSource).not.toContain('Supabase 계정');
   });
+
+  it('shows the app icon safely on the auth callback waiting screen', () => {
+    const authCallbackSource = readAppFile('app/auth/callback.tsx');
+    const iconFrameStart = authCallbackSource.indexOf('iconFrame:');
+    const iconFrameEnd = authCallbackSource.indexOf('brandImage:', iconFrameStart);
+    const iconFrameBlock = authCallbackSource.slice(iconFrameStart, iconFrameEnd);
+    const brandImageStart = authCallbackSource.indexOf('brandImage:');
+    const brandImageEnd = authCallbackSource.indexOf('title:', brandImageStart);
+    const brandImageBlock = authCallbackSource.slice(brandImageStart, brandImageEnd);
+
+    expect(authCallbackSource).toContain("const authCallbackBrandImage = require('../../assets/images/android-icon-foreground.png');");
+    expect(authCallbackSource).toContain('<Image');
+    expect(authCallbackSource).toContain('resizeMode="contain"');
+    expect(authCallbackSource).toContain('source={authCallbackBrandImage}');
+    expect(authCallbackSource).toContain('style={styles.brandImage}');
+    expect(authCallbackSource).not.toContain('CheckCircle2');
+    expect(iconFrameBlock).toContain('height: 92');
+    expect(iconFrameBlock).toContain('width: 92');
+    expect(brandImageBlock).toContain('height: 72');
+    expect(brandImageBlock).toContain('width: 72');
+  });
 });
 
 describe('schedule empty state actions', () => {
@@ -802,6 +899,28 @@ describe('app notification runtime', () => {
     expect(runtimeBlock).toContain('void reinstallRealtimeRefresh();');
     expect(authBlock).toContain('void reinstallRealtimeRefresh();');
   });
+
+  it('requests native phone notification permission once after the first app entry loads', () => {
+    const rootLayoutSource = readAppFile('app/_layout.tsx');
+    const tabsLayoutSource = readAppFile('app/(tabs)/_layout.tsx');
+    const notificationHookSource = readAppFile('hooks/useAppNotifications.ts');
+    const profileSource = readAppFile('app/(tabs)/profile.tsx');
+    const initialPromptStart = notificationHookSource.indexOf('export function useInitialNotificationPermissionPrompt');
+    const initialPromptEnd = notificationHookSource.indexOf('export function useNotificationSettings', initialPromptStart);
+    const initialPromptBlock = notificationHookSource.slice(initialPromptStart, initialPromptEnd);
+
+    expect(rootLayoutSource).toContain('useInitialNotificationPermissionPrompt({ enabled: authGate.canHideSplash });');
+    expect(tabsLayoutSource).not.toContain('useInitialNotificationPermissionPrompt');
+    expect(notificationHookSource).toContain('INITIAL_NOTIFICATION_PERMISSION_PROMPT_KEY');
+    expect(initialPromptBlock).toContain('isAppNotificationEnabled()');
+    expect(initialPromptBlock).toContain('appNotificationEnabled');
+    expect(initialPromptBlock).toContain('enableAppNotifications()');
+    expect(initialPromptBlock).toContain('seedCurrentSocialNotificationState()');
+    expect(initialPromptBlock).toContain('await refreshEnabledNotifications();');
+    expect(initialPromptBlock).not.toContain('Alert.alert(');
+    expect(profileSource).toContain('notificationSettings.enable()');
+    expect(profileSource).toContain('onPress={() => void handleNotificationPermissionEnable()}');
+  });
 });
 
 describe('received card reply UI', () => {
@@ -810,16 +929,33 @@ describe('received card reply UI', () => {
     const submitStart = source.indexOf('async function handleSubmitResponse');
     const submitEnd = source.indexOf('function setCandidateChoice', submitStart);
     const submitBlock = source.slice(submitStart, submitEnd);
+    const responseModalStart = source.indexOf('<Modal transparent visible={Boolean(responseCard)}');
+    const responseModalEnd = source.indexOf('</Modal>', responseModalStart);
+    const responseModalBlock = source.slice(responseModalStart, responseModalEnd);
     const modalStart = source.indexOf('{responseCard ? (');
     const modalEnd = source.indexOf('</Modal>', modalStart);
     const modalBlock = source.slice(modalStart, modalEnd);
 
+    expect(responseModalStart).toBeGreaterThan(-1);
+    expect(responseModalEnd).toBeGreaterThan(responseModalStart);
     expect(source).toContain('TextInput');
     expect(source).toContain("const [responseComment, setResponseComment] = useState('');");
     expect(submitBlock).toContain('respondToReceivedCard(responseCard.id, responses, responseComment)');
+    expect(source).toContain('const responseModalScrollRef = useRef<ScrollView>(null);');
+    expect(source).toContain('const RESPONSE_COMMENT_SCROLL_DELAY_MS = 240;');
+    expect(source).toContain('const scrollResponseCommentIntoView = useCallback(() => {');
+    expect(source).toContain('responseModalScrollRef.current?.scrollToEnd({ animated: true });');
+    expect(responseModalBlock).toContain('<KeyboardAvoidingView');
+    expect(responseModalBlock).toContain("behavior={Platform.OS === 'ios' ? 'padding' : 'height'}");
+    expect(responseModalBlock).toContain('style={styles.responseModalKeyboardAvoider}');
+    expect(modalBlock).toContain('ref={responseModalScrollRef}');
+    expect(modalBlock).toContain('styles.responseModalBodyContent');
     expect(modalBlock).toContain('accessibilityLabel="한마디"');
     expect(modalBlock).toContain('value={responseComment}');
     expect(modalBlock).toContain('onChangeText={setResponseComment}');
+    expect(modalBlock).toContain('onFocus={scrollResponseCommentIntoView}');
+    expect(source).toContain('responseModalKeyboardAvoider:');
+    expect(source).toContain('responseModalBodyContent:');
   });
 
   it('shows feedback and refreshes when a received card can no longer accept responses', () => {
@@ -847,7 +983,7 @@ describe('received card reply UI', () => {
   it('checks social notifications immediately before slower reminder refresh work', () => {
     const source = readAppFile('hooks/useAppNotifications.ts');
 
-    expect(source).toContain('ensureDefaultAppNotificationEnabled');
+    expect(source).toContain('ensureAppNotificationEnabledForGrantedPermission');
     expect(source).toContain('async function refreshSocialNotificationsImmediately()');
     expect(source).toContain('await checkSocialNotifications();');
     expect(source).toContain('void refreshEnabledNotifications();');

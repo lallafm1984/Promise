@@ -274,9 +274,9 @@ export function getManagedCardDeleteConfirmation(card: PromiseCard): ManagedCard
   }
 
   return {
-    title: '카드 취소',
-    body: `${card.title} 카드를 취소하고 관리함에서 제거할까요?`,
-    confirmLabel: '취소하기',
+    title: '카드 삭제',
+    body: `${card.title} 카드를 삭제하고 관리함에서 제거할까요?`,
+    confirmLabel: '삭제하기',
   };
 }
 

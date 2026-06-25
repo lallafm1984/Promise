@@ -36,8 +36,7 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { BottomBannerAd } from '@/components/bottom-banner-ad';
-import { AppScreen, Card, Chip, SectionHeader } from '@/components/ui';
+import { AppScreen, Card, SectionHeader } from '@/components/ui';
 import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { useManagedCards } from '@/hooks/useManagedCards';
 import { usePromiseData } from '@/hooks/usePromiseData';
@@ -902,7 +901,7 @@ export default function ScheduleScreen() {
 
   return (
     <>
-      <AppScreen footer={<BottomBannerAd />} reserveBottomTabs>
+      <AppScreen reserveBottomTabs>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -1339,15 +1338,16 @@ function ScheduleItemCard({
             <Text style={styles.manualScheduleTitle} numberOfLines={2}>
               {item.title}
             </Text>
-            <Pressable
-              accessibilityLabel={`${item.title} 카드 일정 삭제`}
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => onDeleteCardSchedule(item)}
-              style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
-              <Trash2 size={15} color={palette.primaryDeep} />
-            </Pressable>
-            <Chip label="약속 카드" tone="lime" />
+            <View style={styles.manualScheduleActionGroup}>
+              <Pressable
+                accessibilityLabel={`${item.title} 카드 일정 삭제`}
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => onDeleteCardSchedule(item)}
+                style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
+                <Trash2 size={15} color={palette.primaryDeep} />
+              </Pressable>
+            </View>
           </View>
           <View style={styles.cardScheduleInfoRow}>
             <Clock3 size={15} color={palette.primaryDeep} />
@@ -1409,15 +1409,16 @@ function ScheduleItemCard({
           <Text style={styles.manualScheduleTitle} numberOfLines={2}>
             {item.title}
           </Text>
-          <Pressable
-            accessibilityLabel={`${item.title} 일정 편집`}
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => onEdit(item)}
-            style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
-            <Pencil size={15} color={palette.primaryDeep} />
-          </Pressable>
-          <Chip label="직접 추가" tone="sky" />
+          <View style={styles.manualScheduleActionGroup}>
+            <Pressable
+              accessibilityLabel={`${item.title} 일정 편집`}
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => onEdit(item)}
+              style={({ pressed }) => [styles.iconActionButton, pressed && styles.pressed]}>
+              <Pencil size={15} color={palette.primaryDeep} />
+            </Pressable>
+          </View>
         </View>
         <View style={styles.cardScheduleInfoRow}>
           <Clock3 size={15} color={palette.primaryDeep} />
@@ -1855,134 +1856,149 @@ function ComposerModal({
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={mode !== null}>
-      <Pressable style={styles.modalBackdrop} onPress={onClose}>
-        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
-          <View style={[styles.modalPanel, styles.scheduleComposerPanel]}>
-          <View style={styles.modalHeader}>
-            <View style={styles.modalTitleGroup}>
-              <Text style={styles.modalKicker}>{formatSelectedDate(selectedDate)}</Text>
-              <Text style={styles.modalTitle}>{modalTitle}</Text>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.scheduleComposerKeyboardAvoider}>
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            accessibilityLabel={`${modalTitle} 배경 닫기`}
+            accessibilityRole="button"
+            onPress={onClose}
+            style={styles.modalBackdropTouchable}
+          />
+          <View style={styles.modalPressGuard}>
+            <View style={[styles.modalPanel, styles.scheduleComposerPanel]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleGroup}>
+                <Text style={styles.modalKicker}>{formatSelectedDate(selectedDate)}</Text>
+                <Text style={styles.modalTitle}>{modalTitle}</Text>
+              </View>
+              <Pressable
+                accessibilityLabel={`${modalTitle} 닫기`}
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
             </View>
-            <Pressable
-              accessibilityLabel={`${modalTitle} 닫기`}
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={onClose}
-              style={({ pressed }) => [styles.modalCloseButton, pressed && styles.pressed]}>
-              <X size={19} color={palette.primaryDeep} />
-            </Pressable>
-          </View>
 
-          <View style={styles.scheduleComposerForm}>
-            {isSchedule ? (
-              <View style={styles.modalForm}>
-                {!isEditingCardSchedule ? (
+            <ScrollView
+              contentContainerStyle={styles.scheduleComposerForm}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+              style={styles.scheduleComposerFormScroll}>
+              {isSchedule ? (
+                <View style={styles.modalForm}>
+                  {!isEditingCardSchedule ? (
+                    <ModalInput
+                      compact
+                      label="일정 이름"
+                      placeholder="예: 저녁 약속"
+                      value={scheduleTitle}
+                      onChangeText={onChangeScheduleTitle}
+                    />
+                  ) : null}
+                  <CompactScheduleTimeField
+                    value={scheduleTime || createScheduleTimeForDate(selectedDate)}
+                    onChange={onChangeScheduleTime}
+                  />
                   <ModalInput
                     compact
-                    label="일정 이름"
-                    placeholder="예: 저녁 약속"
-                    value={scheduleTitle}
-                    onChangeText={onChangeScheduleTitle}
+                    label="장소"
+                    placeholder="예: 성수 밥집"
+                    value={scheduleLocation}
+                    onChangeText={onChangeScheduleLocation}
                   />
-                ) : null}
-                <CompactScheduleTimeField
-                  value={scheduleTime || createScheduleTimeForDate(selectedDate)}
-                  onChange={onChangeScheduleTime}
-                />
-                <ModalInput
-                  compact
-                  label="장소"
-                  placeholder="예: 성수 밥집"
-                  value={scheduleLocation}
-                  onChangeText={onChangeScheduleLocation}
-                />
-                {!isEditingCardSchedule ? (
+                  {!isEditingCardSchedule ? (
+                    <ColorPicker
+                      label="카드 색상"
+                      compact
+                      options={scheduleColorOptions}
+                      value={scheduleColor}
+                      onChange={onChangeScheduleColor}
+                    />
+                  ) : null}
+                </View>
+              ) : (
+                <View style={styles.modalForm}>
+                  <ModalInput
+                    compact
+                    label="할일"
+                    placeholder="예: 참석자에게 위치 보내기"
+                    value={todoTitle}
+                    onChangeText={onChangeTodoTitle}
+                  />
+                  <ModalInput
+                    compact
+                    label="메모"
+                    placeholder="예: 오늘 중"
+                    value={todoDetail}
+                    onChangeText={onChangeTodoDetail}
+                  />
                   <ColorPicker
                     label="카드 색상"
                     compact
-                    options={scheduleColorOptions}
-                    value={scheduleColor}
-                    onChange={onChangeScheduleColor}
+                    value={todoColor}
+                    onChange={onChangeTodoColor}
                   />
-                ) : null}
-              </View>
-            ) : (
-              <View style={styles.modalForm}>
-                <ModalInput
-                  compact
-                  label="할일"
-                  placeholder="예: 참석자에게 위치 보내기"
-                  value={todoTitle}
-                  onChangeText={onChangeTodoTitle}
-                />
-                <ModalInput
-                  compact
-                  label="메모"
-                  placeholder="예: 오늘 중"
-                  value={todoDetail}
-                  onChangeText={onChangeTodoDetail}
-                />
-                <ColorPicker
-                  label="카드 색상"
-                  compact
-                  value={todoColor}
-                  onChange={onChangeTodoColor}
-                />
-              </View>
-            )}
-          </View>
+                </View>
+              )}
+            </ScrollView>
 
-          <View style={styles.scheduleComposerFooter}>
-            {isSchedule && isEditingSchedule && !isEditingCardSchedule ? (
+            <View style={styles.scheduleComposerFooter}>
+              {isSchedule && isEditingSchedule && !isEditingCardSchedule ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: isSubmitting }}
+                  disabled={isSubmitting}
+                  onPress={onDeleteSchedule}
+                  style={({ pressed }) => [
+                    styles.modalDeleteButton,
+                    isSubmitting && styles.disabledSubmitButton,
+                    pressed && !isSubmitting && styles.pressed,
+                  ]}>
+                  <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
+                  <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>일정 삭제</Text>
+                </Pressable>
+              ) : null}
+
+              {!isSchedule && isEditingTodo ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: isSubmitting }}
+                  disabled={isSubmitting}
+                  onPress={onDeleteTodo}
+                  style={({ pressed }) => [
+                    styles.modalDeleteButton,
+                    isSubmitting && styles.disabledSubmitButton,
+                    pressed && !isSubmitting && styles.pressed,
+                  ]}>
+                  <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
+                  <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>할일 삭제</Text>
+                </Pressable>
+              ) : null}
+
               <Pressable
                 accessibilityRole="button"
-                accessibilityState={{ disabled: isSubmitting }}
-                disabled={isSubmitting}
-                onPress={onDeleteSchedule}
+                accessibilityState={{ disabled }}
+                disabled={disabled}
+                onPress={isSchedule ? onSubmitSchedule : onSubmitTodo}
                 style={({ pressed }) => [
-                  styles.modalDeleteButton,
-                  isSubmitting && styles.disabledSubmitButton,
-                  pressed && !isSubmitting && styles.pressed,
+                  styles.modalSubmitButton,
+                  disabled && styles.disabledSubmitButton,
+                  pressed && !disabled && styles.pressed,
                 ]}>
-                <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
-                <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>일정 삭제</Text>
+                <Text style={[styles.modalSubmitText, disabled && styles.disabledSubmitText]}>
+                  {isSubmitting ? '저장 중' : submitLabel}
+                </Text>
               </Pressable>
-            ) : null}
-
-            {!isSchedule && isEditingTodo ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ disabled: isSubmitting }}
-                disabled={isSubmitting}
-                onPress={onDeleteTodo}
-                style={({ pressed }) => [
-                  styles.modalDeleteButton,
-                  isSubmitting && styles.disabledSubmitButton,
-                  pressed && !isSubmitting && styles.pressed,
-                ]}>
-                <Trash2 size={16} color={isSubmitting ? palette.inkSoft : palette.primaryDeep} />
-                <Text style={[styles.modalDeleteText, isSubmitting && styles.disabledSubmitText]}>할일 삭제</Text>
-              </Pressable>
-            ) : null}
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled }}
-              disabled={disabled}
-              onPress={isSchedule ? onSubmitSchedule : onSubmitTodo}
-              style={({ pressed }) => [
-                styles.modalSubmitButton,
-                disabled && styles.disabledSubmitButton,
-                pressed && !disabled && styles.pressed,
-              ]}>
-              <Text style={[styles.modalSubmitText, disabled && styles.disabledSubmitText]}>
-                {isSubmitting ? '저장 중' : submitLabel}
-              </Text>
-            </Pressable>
+            </View>
+            </View>
           </View>
-          </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -2621,12 +2637,19 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     justifyContent: 'space-between',
   },
+  manualScheduleActionGroup: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 0,
+    justifyContent: 'flex-end',
+  },
   manualScheduleTitle: {
     color: palette.ink,
     flex: 1,
     fontSize: 16,
     fontWeight: '900',
     lineHeight: 21,
+    minWidth: 0,
   },
   iconActionButton: {
     alignItems: 'center',
@@ -2827,11 +2850,20 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   scheduleComposerPanel: {
-    gap: spacing.sm,
-    maxHeight: '82%',
-    padding: spacing.sm,
+    gap: spacing.xs,
+    maxHeight: '96%',
+    padding: spacing.xs,
+  },
+  scheduleComposerKeyboardAvoider: {
+    flex: 1,
+  },
+  scheduleComposerFormScroll: {
+    flexShrink: 1,
+    minHeight: 0,
+    width: '100%',
   },
   scheduleComposerForm: {
+    flexGrow: 1,
     width: '100%',
   },
   scheduleComposerFooter: {

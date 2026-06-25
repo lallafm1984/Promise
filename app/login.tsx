@@ -55,7 +55,7 @@ export default function LoginScreen() {
   const showAuthSetupGuide = shouldShowAuthSetupGuide(isSupabaseConfigured);
 
   if (isAuthenticated) {
-    return <Redirect href="/profile" />;
+    return <Redirect href="/schedule" />;
   }
 
   async function handleProviderPress(provider: SocialProviderId) {
@@ -72,7 +72,7 @@ export default function LoginScreen() {
       const session = await signInWithSocialProvider(provider);
 
       if (session) {
-        router.replace('/profile');
+        router.replace('/schedule');
         return;
       }
 

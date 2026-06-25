@@ -445,9 +445,9 @@ describe('managed card local state', () => {
 
   it('builds confirmation copy before deleting a managed card', () => {
     expect(getManagedCardDeleteConfirmation(buildCard('dinner-card'))).toEqual({
-      title: '카드 취소',
-      body: 'dinner-card card 카드를 취소하고 관리함에서 제거할까요?',
-      confirmLabel: '취소하기',
+      title: '카드 삭제',
+      body: 'dinner-card card 카드를 삭제하고 관리함에서 제거할까요?',
+      confirmLabel: '삭제하기',
     });
   });
 

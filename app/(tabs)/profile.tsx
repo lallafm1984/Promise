@@ -12,7 +12,6 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { Modal, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { ActionButton, AppScreen, Card, SectionHeader } from '@/components/ui';
 import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
 import { mapProfileToHostProfile, updateAuthenticatedProfile } from '@/data/supabaseProfile';
@@ -154,7 +153,7 @@ export default function ProfileScreen() {
 
   return (
     <>
-      <AppScreen footer={<BottomBannerAd />} reserveBottomTabs>
+      <AppScreen reserveBottomTabs>
         <View style={styles.header}>
           <View style={styles.headerShapePrimary} />
           <View style={styles.headerShapeMint} />

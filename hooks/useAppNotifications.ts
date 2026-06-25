@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 
 import { getActivePromiseRepository } from '@/data/promiseRepository';
@@ -9,13 +10,13 @@ import {
   DEFAULT_APP_NOTIFICATION_PREFERENCES,
   disableAppNotifications,
   enableAppNotifications,
-  ensureDefaultAppNotificationEnabled,
   ensureAppNotificationEnabledForGrantedPermission,
   getAppNotificationPreferencesSnapshot,
   getAppNotificationPermissionStatus,
   getAppNotificationSettingsSnapshot,
   installSocialNotificationRealtimeRefresh,
   installNotificationResponseHandler,
+  isAppNotificationEnabled,
   scheduleAppointmentReminders,
   seedCurrentSocialNotificationState,
   sendTestAppNotification,
@@ -29,8 +30,10 @@ import type { AppNotificationPermissionStatus } from '@/lib/notificationStatus';
 import type { ReminderLead } from '@/types/promise';
 import { supabase } from '@/lib/supabase';
 
+const INITIAL_NOTIFICATION_PERMISSION_PROMPT_KEY = 'whenbollae:notifications:initial-permission-prompt-seen:v2';
+
 async function refreshEnabledNotifications() {
-  if (!(await ensureDefaultAppNotificationEnabled())) {
+  if (!(await ensureAppNotificationEnabledForGrantedPermission())) {
     return;
   }
 
@@ -56,6 +59,10 @@ async function refreshSocialNotificationsImmediately() {
 
   await checkSocialNotifications();
   void refreshEnabledNotifications();
+}
+
+async function markInitialNotificationPermissionPromptSeen() {
+  await AsyncStorage.setItem(INITIAL_NOTIFICATION_PERMISSION_PROMPT_KEY, 'true');
 }
 
 export function useAppNotificationRuntime() {
@@ -118,6 +125,50 @@ export function useAppNotificationRuntime() {
       clearInterval(intervalId);
     };
   }, []);
+}
+
+export function useInitialNotificationPermissionPrompt({ enabled = true }: { enabled?: boolean } = {}) {
+  const didCheckPromptRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled || Platform.OS === 'web' || didCheckPromptRef.current) {
+      return undefined;
+    }
+
+    didCheckPromptRef.current = true;
+    let isMounted = true;
+
+    async function showPromptIfNeeded() {
+      const [hasSeenPrompt, appNotificationEnabled] = await Promise.all([
+        AsyncStorage.getItem(INITIAL_NOTIFICATION_PERMISSION_PROMPT_KEY),
+        isAppNotificationEnabled(),
+      ]);
+
+      if (!isMounted || hasSeenPrompt === 'true' || appNotificationEnabled) {
+        return;
+      }
+
+      try {
+        await markInitialNotificationPermissionPromptSeen();
+        const granted = await enableAppNotifications();
+
+        if (!isMounted || !granted) {
+          return;
+        }
+
+        await seedCurrentSocialNotificationState();
+        await refreshEnabledNotifications();
+      } catch (error) {
+        console.warn('Initial notification permission prompt failed', error);
+      }
+    }
+
+    void showPromptIfNeeded();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [enabled]);
 }
 
 export function useNotificationSettings() {

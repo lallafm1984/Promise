@@ -28,6 +28,7 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 whenbollae-*.png
+qa/
 
 # macOS
 .DS_Store

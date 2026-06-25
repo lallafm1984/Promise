@@ -1,12 +1,14 @@
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import { CheckCircle2, KeyRound } from 'lucide-react-native';
+import { KeyRound } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton, AppScreen, Card } from '@/components/ui';
 import { palette, radius, spacing } from '@/constants/theme';
 import { createSessionFromUrl, isAuthCallbackUrl } from '@/lib/supabaseAuth';
+
+const authCallbackBrandImage = require('../../assets/images/android-icon-foreground.png');
 
 export default function AuthCallbackScreen() {
   const router = useRouter();
@@ -71,7 +73,16 @@ export default function AuthCallbackScreen() {
     <AppScreen contentStyle={styles.screenContent}>
       <Card style={styles.panel}>
         <View style={styles.iconFrame}>
-          {error ? <KeyRound size={28} color={palette.primaryDeep} /> : <CheckCircle2 size={28} color={palette.primaryDeep} />}
+          {error ? (
+            <KeyRound size={32} color={palette.primaryDeep} />
+          ) : (
+            <Image
+              accessibilityIgnoresInvertColors
+              resizeMode="contain"
+              source={authCallbackBrandImage}
+              style={styles.brandImage}
+            />
+          )}
         </View>
         <Text style={styles.title}>{error ? '로그인을 다시 확인해 주세요' : '로그인 처리 중'}</Text>
         <Text style={styles.body}>
@@ -98,13 +109,17 @@ const styles = StyleSheet.create({
   },
   iconFrame: {
     alignItems: 'center',
-    backgroundColor: palette.amberSoft,
+    backgroundColor: palette.primary,
     borderColor: palette.lineStrong,
     borderRadius: radius.lg,
     borderWidth: 2,
-    height: 58,
+    height: 92,
     justifyContent: 'center',
-    width: 58,
+    width: 92,
+  },
+  brandImage: {
+    height: 72,
+    width: 72,
   },
   title: {
     color: palette.ink,

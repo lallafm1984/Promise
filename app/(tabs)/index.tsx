@@ -1,5 +1,5 @@
 import { Redirect } from 'expo-router';
 
 export default function IndexRedirect() {
-  return <Redirect href="/create" />;
+  return <Redirect href="/schedule" />;
 }

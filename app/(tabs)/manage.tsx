@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { AlertTriangle, Link2, Send, Trash2, UsersRound, X } from 'lucide-react-native';
-import { Modal, Share, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Share, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { BottomBannerAd } from '@/components/bottom-banner-ad';
 import { DraftPreviewCard, ManagedCardsSection } from '@/components/card-menu';
 import { ActionButton, AppScreen, Card } from '@/components/ui';
 import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
@@ -57,6 +56,7 @@ import type { CandidateSlot, Participant, PromiseCard, ReceivedCardResponseChoic
 type SelectableResponseChoice = Exclude<ReceivedCardResponseChoice, 'MAYBE'>;
 type QuickConfirmItem = { card: PromiseCard; suggestedCandidate: CandidateSlot };
 type DeleteModalActionVariant = 'secondary' | 'danger';
+const RESPONSE_COMMENT_SCROLL_DELAY_MS = 240;
 
 const participantChoiceLabels: Record<ResponseChoice, string> = {
   YES: '가능',
@@ -408,6 +408,7 @@ export default function ManageCardsScreen() {
   const [selectedQuickCandidateIds, setSelectedQuickCandidateIds] = useState<Record<string, string>>({});
   const [isConfirming, setIsConfirming] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
+  const responseModalScrollRef = useRef<ScrollView>(null);
   const now = useMemo(() => new Date(), [managedCards]);
   const currentProfile = useMemo(
     () => (profile ? { id: profile.id, displayName: profile.displayName } : undefined),
@@ -757,6 +758,15 @@ export default function ManageCardsScreen() {
     }
   }
 
+  const scrollResponseCommentIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      responseModalScrollRef.current?.scrollToEnd({ animated: true });
+    });
+    setTimeout(() => {
+      responseModalScrollRef.current?.scrollToEnd({ animated: true });
+    }, RESPONSE_COMMENT_SCROLL_DELAY_MS);
+  }, []);
+
   function setCandidateChoice(candidateId: string, choice: SelectableResponseChoice) {
     setResponseChoices((currentChoices) => ({
       ...currentChoices,
@@ -802,7 +812,7 @@ export default function ManageCardsScreen() {
   const routeScrollKey = Array.isArray(scroll) ? scroll[0] : scroll;
 
   return (
-    <AppScreen footer={<BottomBannerAd />} reserveBottomTabs scrollToTopKey={routeScrollKey}>
+    <AppScreen reserveBottomTabs scrollToTopKey={routeScrollKey}>
       <View style={styles.header}>
         <View style={styles.headerShapePrimary} />
         <View style={styles.headerShapeMint} />
@@ -1084,6 +1094,9 @@ export default function ManageCardsScreen() {
                         variant="secondary"
                         icon={<UsersRound size={18} color={palette.primaryDeep} />}
                         disabled={isReshareActionPending}
+                        singleLineLabel
+                        style={styles.previewAppFriendButton}
+                        labelStyle={styles.previewSecondaryActionLabel}
                         fullWidth
                         onPress={openReshareFriendPicker}
                       />
@@ -1092,6 +1105,9 @@ export default function ManageCardsScreen() {
                         variant="secondary"
                         icon={<Link2 size={18} color={palette.primaryDeep} />}
                         disabled={isReshareActionPending}
+                        singleLineLabel
+                        style={styles.previewLinkButton}
+                        labelStyle={styles.previewSecondaryActionLabel}
                         fullWidth
                         onPress={() => void handleCopyReshareLink()}
                       />
@@ -1235,104 +1251,113 @@ export default function ManageCardsScreen() {
       </Modal>
 
       <Modal transparent visible={Boolean(responseCard)} animationType="fade" onRequestClose={closeResponseModal}>
-        <View
-          style={[styles.modalBackdrop, styles.resultModalBackdrop]}
-          onTouchEnd={(event) => {
-            if (event.target === event.currentTarget) {
-              closeResponseModal();
-            }
-          }}>
-          {responseCard ? (
-            <Card style={styles.resultModal}>
-              <View style={styles.resultHeader}>
-                <View style={styles.resultHeaderCopy}>
-                  <Text style={styles.resultKicker}>{responseCard.requesterName ?? responseCard.hostName}님의 카드</Text>
-                  <Text style={styles.resultTitle} numberOfLines={2}>
-                    {responseCard.title}
-                  </Text>
-                  {shouldShowCardLocationDetail(responseCard) ? (
-                    <Text style={styles.resultSubtitle}>{responseCard.location}</Text>
-                  ) : null}
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={closeResponseModal}
-                  style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
-                  <Text style={styles.closeButtonText}>닫기</Text>
-                </Pressable>
-              </View>
-
-              <ScrollView
-                contentContainerStyle={styles.resultModalBodyContent}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                style={styles.resultModalBodyScroll}>
-                <View style={styles.resultList}>
-                  {responseCard.candidates.map((candidate) => (
-                    <View key={candidate.id} style={styles.responseCandidate}>
-                      <View style={styles.resultCandidateCopy}>
-                        <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
-                        <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
-                      </View>
-                      {canRespond ? (
-                        <View style={styles.responseChoiceRow}>
-                          <ResponseChoiceButton
-                            choice="YES"
-                            label="가능"
-                            selected={responseChoices[candidate.id] === 'YES'}
-                            onPress={() => setCandidateChoice(candidate.id, 'YES')}
-                          />
-                          <ResponseChoiceButton
-                            choice="NO"
-                            label="어려움"
-                            selected={responseChoices[candidate.id] === 'NO'}
-                            onPress={() => setCandidateChoice(candidate.id, 'NO')}
-                          />
-                        </View>
-                      ) : null}
-                    </View>
-                  ))}
-                </View>
-
-                {canRespond ? (
-                  <View style={styles.responseCommentShell}>
-                    <Text style={styles.responseCommentLabel}>한마디</Text>
-                    <TextInput
-                      accessibilityLabel="한마디"
-                      maxLength={120}
-                      multiline
-                      onChangeText={setResponseComment}
-                      placeholder="친구에게 전할 말을 적어주세요"
-                      placeholderTextColor={palette.inkSoft}
-                      style={styles.responseCommentInput}
-                      value={responseComment}
-                    />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.responseModalKeyboardAvoider}>
+          <View
+            style={[styles.modalBackdrop, styles.resultModalBackdrop]}
+            onTouchEnd={(event) => {
+              if (event.target === event.currentTarget) {
+                closeResponseModal();
+              }
+            }}>
+            {responseCard ? (
+              <Card style={styles.resultModal}>
+                <View style={styles.resultHeader}>
+                  <View style={styles.resultHeaderCopy}>
+                    <Text style={styles.resultKicker}>{responseCard.requesterName ?? responseCard.hostName}님의 카드</Text>
+                    <Text style={styles.resultTitle} numberOfLines={2}>
+                      {responseCard.title}
+                    </Text>
+                    {shouldShowCardLocationDetail(responseCard) ? (
+                      <Text style={styles.resultSubtitle}>{responseCard.location}</Text>
+                    ) : null}
                   </View>
-                ) : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={closeResponseModal}
+                    style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
+                    <Text style={styles.closeButtonText}>닫기</Text>
+                  </Pressable>
+                </View>
 
-                {responseBadges.length > 0 ? <ResponseBadgeSummary badges={responseBadges} /> : null}
-                {responseFeedback ? (
-                  <Text
-                    style={[
-                      styles.responseFeedback,
-                      isResponseUnavailable && styles.responseUnavailableFeedback,
-                    ]}>
-                    {responseFeedback}
-                  </Text>
-                ) : null}
-                {canRespond ? (
-                  <ActionButton
-                    label={isResponding ? '응답 중' : '응답 보내기'}
-                    variant="primary"
-                    disabled={isResponding || !hasAllResponseChoices}
-                    fullWidth
-                    onPress={() => void handleSubmitResponse()}
-                  />
-                ) : null}
-              </ScrollView>
-            </Card>
-          ) : null}
-        </View>
+                <ScrollView
+                  ref={responseModalScrollRef}
+                  contentContainerStyle={[
+                    styles.resultModalBodyContent,
+                    canRespond && styles.responseModalBodyContent,
+                  ]}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  style={styles.resultModalBodyScroll}>
+                  <View style={styles.resultList}>
+                    {responseCard.candidates.map((candidate) => (
+                      <View key={candidate.id} style={styles.responseCandidate}>
+                        <View style={styles.resultCandidateCopy}>
+                          <Text style={styles.resultCandidateTime}>{candidate.label}</Text>
+                          <Text style={styles.resultCandidateMeta}>{formatCandidateResponseSummary(candidate.summary)}</Text>
+                        </View>
+                        {canRespond ? (
+                          <View style={styles.responseChoiceRow}>
+                            <ResponseChoiceButton
+                              choice="YES"
+                              label="가능"
+                              selected={responseChoices[candidate.id] === 'YES'}
+                              onPress={() => setCandidateChoice(candidate.id, 'YES')}
+                            />
+                            <ResponseChoiceButton
+                              choice="NO"
+                              label="어려움"
+                              selected={responseChoices[candidate.id] === 'NO'}
+                              onPress={() => setCandidateChoice(candidate.id, 'NO')}
+                            />
+                          </View>
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+
+                  {canRespond ? (
+                    <View style={styles.responseCommentShell}>
+                      <Text style={styles.responseCommentLabel}>한마디</Text>
+                      <TextInput
+                        accessibilityLabel="한마디"
+                        maxLength={120}
+                        multiline
+                        onChangeText={setResponseComment}
+                        onFocus={scrollResponseCommentIntoView}
+                        placeholder="친구에게 전할 말을 적어주세요"
+                        placeholderTextColor={palette.inkSoft}
+                        style={styles.responseCommentInput}
+                        value={responseComment}
+                      />
+                    </View>
+                  ) : null}
+
+                  {responseBadges.length > 0 ? <ResponseBadgeSummary badges={responseBadges} /> : null}
+                  {responseFeedback ? (
+                    <Text
+                      style={[
+                        styles.responseFeedback,
+                        isResponseUnavailable && styles.responseUnavailableFeedback,
+                      ]}>
+                      {responseFeedback}
+                    </Text>
+                  ) : null}
+                  {canRespond ? (
+                    <ActionButton
+                      label={isResponding ? '응답 중' : '응답 보내기'}
+                      variant="primary"
+                      disabled={isResponding || !hasAllResponseChoices}
+                      fullWidth
+                      onPress={() => void handleSubmitResponse()}
+                    />
+                  ) : null}
+                </ScrollView>
+              </Card>
+            ) : null}
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </AppScreen>
   );
@@ -1921,6 +1946,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  previewAppFriendButton: {
+    flex: 1.55,
+    paddingHorizontal: spacing.sm,
+  },
+  previewLinkButton: {
+    flex: 0.95,
+    paddingHorizontal: spacing.sm,
+  },
+  previewSecondaryActionLabel: {
+    fontSize: 13,
+  },
   friendPicker: {
     gap: spacing.sm,
   },
@@ -2037,6 +2073,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     width: '100%',
   },
+  responseModalKeyboardAvoider: {
+    flex: 1,
+  },
   resultModalBodyScroll: {
     flexShrink: 1,
     minHeight: 0,
@@ -2044,6 +2083,9 @@ const styles = StyleSheet.create({
   resultModalBodyContent: {
     gap: spacing.md,
     paddingBottom: spacing.lg,
+  },
+  responseModalBodyContent: {
+    paddingBottom: spacing.xxl * 2,
   },
   resultHeader: {
     alignItems: 'flex-start',

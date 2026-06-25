@@ -1,10 +1,70 @@
 param(
-    [string]$OutputPath = ""
+    [string]$OutputPath = "",
+    [string]$ShortDrive = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
+function Get-FreeSubstDrive {
+    param([string]$PreferredDrive)
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($PreferredDrive)) {
+        $candidates += $PreferredDrive.TrimEnd("\")
+    }
+    $candidates += @("P:", "Q:", "R:", "S:", "T:", "U:", "V:", "W:", "X:", "Y:", "Z:")
+
+    foreach ($candidate in $candidates) {
+        $drive = $candidate
+        if ($drive.Length -eq 1) {
+            $drive = "${drive}:"
+        }
+        $driveRoot = "$drive\"
+        if (-not (Test-Path $driveRoot)) {
+            return $drive
+        }
+    }
+
+    throw "No free drive letter was found for the short Android build path."
+}
+
+if ($env:OS -eq "Windows_NT" -and -not $env:PROMISE_LOCAL_AAB_SHORT_PATH_ACTIVE -and $ProjectRoot.Length -gt 20) {
+    $drive = Get-FreeSubstDrive -PreferredDrive $ShortDrive
+    $driveRoot = "$drive\"
+    $projectParent = Split-Path -Parent $ProjectRoot
+    $projectLeaf = Split-Path -Leaf $ProjectRoot
+    $createdSubst = $false
+
+    try {
+        & subst $drive $projectParent
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to map $driveRoot to $projectParent"
+        }
+        $createdSubst = $true
+
+        $env:PROMISE_LOCAL_AAB_SHORT_PATH_ACTIVE = "1"
+        $shortProjectRoot = Join-Path $driveRoot $projectLeaf
+        $scriptOnShortPath = Join-Path $shortProjectRoot "scripts\build-android-aab.ps1"
+        $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $scriptOnShortPath)
+        if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+            $arguments += @("-OutputPath", $OutputPath)
+        }
+
+        & powershell @arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Short-path local AAB build failed with exit code $LASTEXITCODE"
+        }
+        exit 0
+    } finally {
+        Remove-Item Env:\PROMISE_LOCAL_AAB_SHORT_PATH_ACTIVE -ErrorAction SilentlyContinue
+        if ($createdSubst) {
+            & subst $drive /D | Out-Null
+        }
+    }
+}
+
 $AndroidDir = Join-Path $ProjectRoot "android"
 $EnvFile = Join-Path $ProjectRoot ".env"
 $KeystorePropertiesFile = Join-Path $AndroidDir "keystore.properties"

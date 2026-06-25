@@ -20,4 +20,7 @@ the keystore or `android/keystore.properties`.
 
    `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android-aab.ps1`
 
+On Windows, the script maps the project to a short temporary drive path before
+running Gradle so native builds do not fail on the 260-character path limit.
+
 The output is written to `dist/android/whenbollae-local-release.aab`.

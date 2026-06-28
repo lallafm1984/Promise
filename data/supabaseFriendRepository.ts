@@ -61,7 +61,7 @@ function mapFriendship(row: FriendshipRow, userId: string): AppFriend | null {
 
   return {
     ...mapFriendProfile(otherProfile, row.id),
-    lastActiveLabel: '계정 동기화됨',
+    lastActiveLabel: '',
   };
 }
 

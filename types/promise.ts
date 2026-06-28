@@ -156,18 +156,6 @@ export interface MobileSyncSnapshot {
   hasChanges: boolean;
 }
 
-export interface SchedulePlannerRepository {
-  listManualScheduleItems(): Promise<DisplayScheduleItem[]>;
-  createManualScheduleItem(input: CreateManualScheduleInput): Promise<DisplayScheduleItem>;
-  updateManualScheduleItem(scheduleId: string, input: CreateManualScheduleInput): Promise<DisplayScheduleItem>;
-  deleteManualScheduleItem(scheduleId: string): Promise<void>;
-  listTodos(): Promise<TodoItem[]>;
-  createTodo(input: CreateTodoInput): Promise<TodoItem>;
-  updateTodo(todoId: string, input: UpdateTodoInput): Promise<TodoItem>;
-  deleteTodo(todoId: string): Promise<void>;
-  toggleTodo(todoId: string): Promise<TodoItem>;
-}
-
 export interface HostProfile {
   id: string;
   displayName: string;

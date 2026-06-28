@@ -369,9 +369,7 @@ function FriendRow({ friend, onDelete }: { friend: AppFriend; onDelete: () => vo
       <FriendAvatar label={friend.avatarLabel} color={friend.color} />
       <View style={styles.personCopy}>
         <Text style={styles.personName}>{friend.displayName}</Text>
-        <Text style={styles.personMeta}>
-          @{friend.handle} · {friend.lastActiveLabel}
-        </Text>
+        <Text style={styles.personMeta}>@{friend.handle}</Text>
       </View>
       <DeleteButton accessibilityLabel={`${friend.displayName} 친구 삭제`} onPress={onDelete} />
     </Card>

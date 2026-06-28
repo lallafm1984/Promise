@@ -144,6 +144,23 @@ describe('bottom tab UI contract', () => {
     expect(scheduleSource).toContain('} = useSchedulePlanner();');
   });
 
+  it('keeps direct schedules and todos local-only instead of using a Supabase schedule repository', () => {
+    const plannerSource = readAppFile('hooks/useSchedulePlanner.ts');
+    const notificationSource = readAppFile('hooks/useAppNotifications.ts');
+
+    expect(plannerSource).toContain(
+      "import { refreshEnabledNotificationsWithManualScheduleItems } from '@/hooks/useAppNotifications';",
+    );
+    expect(plannerSource.match(/refreshEnabledNotificationsWithManualScheduleItems\(nextState\.manualScheduleItems\)/g)).toHaveLength(3);
+    expect(plannerSource).not.toContain("import { getActiveScheduleRepository }");
+    expect(plannerSource).not.toContain('repository.createManualScheduleItem');
+    expect(plannerSource).not.toContain('repository.createTodo');
+    expect(plannerSource).toContain('createLocalTodoItem');
+    expect(notificationSource).toContain('export async function refreshEnabledNotificationsWithManualScheduleItems');
+    expect(notificationSource).toContain('scheduleAppointmentReminders(profile, [...cardScheduleItems, ...manualScheduleItems])');
+    expect(notificationSource).not.toContain("import { getActiveScheduleRepository }");
+  });
+
   it('preloads friend data from the tab layout before friend-dependent screens open', () => {
     const layoutSource = readAppFile('app/(tabs)/_layout.tsx');
     const friendsHookSource = readAppFile('hooks/useFriends.ts');
@@ -175,6 +192,18 @@ describe('schedule and friends surface notices', () => {
 
     expect(scheduleSource).not.toContain('StorageModeNotice');
     expect(friendsSource).not.toContain('StorageModeNotice');
+  });
+
+  it('does not render the schedule planner storage error banner', () => {
+    const scheduleSource = readAppFile('app/(tabs)/schedule.tsx');
+    const contentStart = scheduleSource.indexOf('<Animated.View style={[styles.contentStack');
+    const contentEnd = scheduleSource.indexOf('</Animated.View>', contentStart);
+    const contentBlock = scheduleSource.slice(contentStart, contentEnd);
+
+    expect(contentStart).toBeGreaterThan(-1);
+    expect(contentEnd).toBeGreaterThan(contentStart);
+    expect(contentBlock).not.toContain('plannerError');
+    expect(scheduleSource).not.toContain('errorText:');
   });
 
   it('closes the card action modal before opening the schedule delete confirmation', () => {
@@ -307,31 +336,44 @@ describe('schedule and friends surface notices', () => {
     const formIndex = modalBlock.indexOf('contentContainerStyle={styles.scheduleComposerForm}');
     const footerIndex = modalBlock.indexOf('style={styles.scheduleComposerFooter}');
     const submitIndex = modalBlock.indexOf('styles.modalSubmitButton');
+    const panelStyleStart = scheduleSource.indexOf('scheduleComposerPanel:');
+    const panelStyleEnd = scheduleSource.indexOf('scheduleComposerKeyboardAvoider:', panelStyleStart);
+    const panelStyleBlock = scheduleSource.slice(panelStyleStart, panelStyleEnd);
 
     expect(modalStart).toBeGreaterThan(-1);
     expect(modalEnd).toBeGreaterThan(modalStart);
     expect(modalBlock).toContain('<KeyboardAvoidingView');
     expect(modalBlock).toContain('style={styles.scheduleComposerKeyboardAvoider}');
     expect(modalBlock).toContain('styles.modalBackdropTouchable');
+    expect(modalBlock).toContain('styles.scheduleComposerPressGuard');
     expect(modalBlock).toContain('<ScrollView');
     expect(modalBlock).toContain('keyboardShouldPersistTaps="handled"');
     expect(modalBlock).toContain('nestedScrollEnabled');
     expect(modalBlock).toContain('<CompactScheduleTimeField');
     expect(scheduleSource).toContain('scheduleComposerPanel:');
     expect(scheduleSource).toContain('scheduleComposerKeyboardAvoider:');
+    expect(scheduleSource).toContain('scheduleComposerPressGuard:');
     expect(scheduleSource).toContain('scheduleComposerFormScroll:');
     expect(scheduleSource).toContain('scheduleComposerForm:');
     expect(scheduleSource).toContain('compactTimeShell:');
     expect(scheduleSource).toContain('compactColorPickerShell:');
     expect(scheduleSource).toContain('scheduleComposerFooter:');
+    expect(panelStyleStart).toBeGreaterThan(-1);
+    expect(panelStyleEnd).toBeGreaterThan(panelStyleStart);
     expect(formScrollIndex).toBeGreaterThan(-1);
     expect(formIndex).toBeGreaterThan(-1);
     expect(formScrollEndIndex).toBeGreaterThan(formIndex);
     expect(footerIndex).toBeGreaterThan(formScrollEndIndex);
     expect(submitIndex).toBeGreaterThan(footerIndex);
-    expect(scheduleSource).toContain("maxHeight: '96%'");
+    expect(scheduleSource).toContain("alignSelf: 'stretch'");
+    expect(scheduleSource).toContain("maxHeight: '86%'");
+    expect(scheduleSource).toContain('flexGrow: 0');
     expect(scheduleSource).toContain('flexShrink: 1');
     expect(scheduleSource).toContain('minHeight: 0');
+    expect(scheduleSource).toContain('paddingBottom: spacing.xs');
+    expect(scheduleSource).toContain('padding: spacing.md');
+    expect(panelStyleBlock).not.toContain('padding: spacing.xs');
+    expect(scheduleSource).not.toContain("scheduleComposerPanel: {\n    gap: spacing.xs,\n    height: '86%'");
   });
 
   it('opens a recurring todo manager from the todo screen', () => {
@@ -505,8 +547,54 @@ describe('profile public identity sharing', () => {
     expect(notificationBlock).toContain("category=\"friendRequests\"");
     expect(notificationBlock).toContain("category=\"cardReceived\"");
     expect(notificationBlock).toContain("category=\"reminders\"");
+    expect(notificationBlock).toContain('label="일정 리마인드"');
+    expect(notificationBlock).not.toContain('label="약속 리마인드"');
     expect(source).toContain('logoutFooter:');
     expect(source).toContain("label={isAuthWorking ? '처리 중' : '로그아웃'}");
+  });
+
+  it('reloads notification settings when the profile tab receives focus', () => {
+    const source = readAppFile('app/(tabs)/profile.tsx');
+    const focusStart = source.indexOf('useFocusEffect(');
+    const focusEnd = source.indexOf('async function handleNotificationPermissionEnable', focusStart);
+    const focusBlock = source.slice(focusStart, focusEnd);
+
+    expect(source).toContain("import { useFocusEffect } from 'expo-router';");
+    expect(focusStart).toBeGreaterThan(-1);
+    expect(focusEnd).toBeGreaterThan(focusStart);
+    expect(focusBlock).toContain('notificationSettings.reload');
+  });
+
+  it('keeps reminder lead choices in a single horizontal row', () => {
+    const source = readAppFile('app/(tabs)/profile.tsx');
+    const rowStart = source.indexOf('reminderLeadRow:');
+    const buttonStart = source.indexOf('reminderLeadButton:', rowStart);
+    const selectedStart = source.indexOf('selectedReminderLeadButton:', buttonStart);
+    const rowStyles = source.slice(rowStart, buttonStart);
+    const buttonStyles = source.slice(buttonStart, selectedStart);
+
+    expect(rowStart).toBeGreaterThan(-1);
+    expect(buttonStart).toBeGreaterThan(rowStart);
+    expect(rowStyles).toContain("flexDirection: 'row'");
+    expect(rowStyles).toContain('flexWrap:');
+    expect(rowStyles).toContain("'nowrap'");
+    expect(buttonStyles).toContain('flex: 1');
+    expect(buttonStyles).not.toContain('minWidth: 96');
+  });
+
+  it('asks for confirmation before signing out', () => {
+    const source = readAppFile('app/(tabs)/profile.tsx');
+    const footerStart = source.indexOf('styles.logoutFooter');
+    const footerEnd = source.indexOf('</View>', footerStart);
+    const footerBlock = source.slice(footerStart, footerEnd);
+
+    expect(source).toContain('const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);');
+    expect(source).toContain('function openLogoutConfirm()');
+    expect(footerBlock).toContain('onPress={openLogoutConfirm}');
+    expect(source).toContain('<ConfirmActionModal');
+    expect(source).toContain('title="로그아웃할까요?"');
+    expect(source).toContain('confirmLabel={isAuthWorking ?');
+    expect(source).toContain("onConfirm={() => void handleSignOut()}");
   });
 
   it('applies notification preference changes optimistically without waiting for reminder refresh', () => {
@@ -531,6 +619,21 @@ describe('profile public identity sharing', () => {
 });
 
 describe('friends add modal copy', () => {
+  it('does not show sync status copy in friend list rows', () => {
+    const friendsSource = readAppFile('app/(tabs)/friends.tsx');
+    const repositorySource = readAppFile('data/supabaseFriendRepository.ts');
+    const rowStart = friendsSource.indexOf('function FriendRow');
+    const rowEnd = friendsSource.indexOf('function FriendRequestRow', rowStart);
+    const rowBlock = friendsSource.slice(rowStart, rowEnd);
+
+    expect(rowStart).toBeGreaterThan(-1);
+    expect(rowEnd).toBeGreaterThan(rowStart);
+    expect(rowBlock).toContain('<Text style={styles.personMeta}>@{friend.handle}</Text>');
+    expect(rowBlock).not.toContain('friend.lastActiveLabel');
+    expect(friendsSource).not.toContain('계정 동기화됨');
+    expect(repositorySource).not.toContain('계정 동기화됨');
+  });
+
   it('asks for a friend id instead of a profile link', () => {
     const source = readAppFile('app/(tabs)/friends.tsx');
     const addModalStart = source.indexOf('function AddFriendModal');

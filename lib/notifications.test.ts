@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AppFriend, FriendRequest } from '@/lib/friends';
+import { createLocalManualScheduleItem } from '@/lib/schedulePlannerState';
 import type { ReceivedCardAlert } from '@/types/promise';
 import {
   buildCardConfirmedNotification,
@@ -87,7 +88,7 @@ const acceptedFriend: AppFriend = {
   handle: 'yuna',
   avatarLabel: '유',
   color: '#DDEBFF',
-  lastActiveLabel: '계정 동기화됨',
+  lastActiveLabel: '',
 };
 
 describe('notification helpers', () => {
@@ -158,7 +159,7 @@ describe('notification helpers', () => {
         location: '강남 CGV',
       }),
     ).toEqual({
-      title: '약속 리마인드',
+      title: '일정 리마인드',
       body: '17:00 - 19:20 · 강남 CGV',
       data: { url: '/schedule', type: 'appointment_reminder', id: 'card-gangnam' },
     });
@@ -261,5 +262,28 @@ describe('notification helpers', () => {
     );
 
     expect(plan.scheduleItems.map((item) => item.mapKey)).toEqual(['card-gangnam-movie']);
+  });
+
+  it('schedules reminders for local manual schedule items', () => {
+    const manualSchedule = createLocalManualScheduleItem(
+      {
+        title: '성수 카페',
+        location: '성수',
+        startsAt: localIso(6, 20, 18, 0),
+        endsAt: localIso(6, 20, 19, 0),
+        colorKey: 'sky',
+      },
+      'local-schedule-1',
+    );
+
+    const plan = buildReminderSchedulePlan(
+      '30_MIN',
+      [manualSchedule],
+      {},
+      new Date(localIso(6, 20, 12, 0)).getTime(),
+    );
+
+    expect(plan.scheduleItems.map((item) => item.mapKey)).toEqual(['local-schedule-1']);
+    expect(plan.scheduleItems[0]?.fireDate.toISOString()).toBe(localIso(6, 20, 17, 30));
   });
 });

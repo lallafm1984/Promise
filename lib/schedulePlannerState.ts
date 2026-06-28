@@ -2,10 +2,12 @@ import { buildScheduleLabels, getCandidateEndsAt } from '@/lib/cardMenu';
 import type {
   CreateManualScheduleInput,
   CreateRecurringTodoInput,
+  CreateTodoInput,
   DisplayScheduleItem,
   RecurringTodoCompletion,
   RecurringTodoItem,
   TodoItem,
+  UpdateTodoInput,
   WeekdayIndex,
 } from '@/types/promise';
 
@@ -125,7 +127,7 @@ export function createLocalManualScheduleItem(
     dateLabel: scheduleLabels.dateLabel,
     timeLabel: scheduleLabels.timeLabel,
     location: input.location.trim() || '장소 미정',
-    status: 'READY',
+    status: 'REMINDER_ON',
     source: 'MANUAL',
     colorKey: input.colorKey,
   };
@@ -138,6 +140,34 @@ export function createLocalRecurringTodoItem(input: CreateRecurringTodoInput, id
     detail: cleanOptionalText(input.detail, '오늘 중'),
     weekdays: normalizeWeekdays(input.weekdays),
     colorKey: input.colorKey,
+  };
+}
+
+export function createLocalTodoItem(input: CreateTodoInput, id: string): TodoItem {
+  return {
+    id,
+    dateKey: input.dateKey,
+    title: input.title.trim(),
+    detail: cleanOptionalText(input.detail, '오늘 중'),
+    done: false,
+    colorKey: input.colorKey,
+  };
+}
+
+export function updateLocalTodoItem(todo: TodoItem, input: UpdateTodoInput): TodoItem {
+  return {
+    ...todo,
+    dateKey: input.dateKey,
+    title: input.title.trim(),
+    detail: cleanOptionalText(input.detail, '오늘 중'),
+    colorKey: input.colorKey,
+  };
+}
+
+export function toggleLocalTodoItem(todo: TodoItem): TodoItem {
+  return {
+    ...todo,
+    done: !todo.done,
   };
 }
 
@@ -226,7 +256,10 @@ export function parseSchedulePlannerCache(value: string | null): SchedulePlanner
     }
 
     return {
-      manualScheduleItems,
+      manualScheduleItems: manualScheduleItems.map((item) => ({
+        ...item,
+        status: 'REMINDER_ON',
+      })),
       todos,
       recurringTodos,
       recurringTodoCompletions,

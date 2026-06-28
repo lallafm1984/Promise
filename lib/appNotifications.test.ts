@@ -280,6 +280,19 @@ describe('app notification registration', () => {
     expect(scheduleNotificationAsync).not.toHaveBeenCalled();
   });
 
+  it('configures the reminder channel with schedule reminder copy', async () => {
+    const { configureAppNotifications } = await import('./appNotifications');
+
+    await configureAppNotifications();
+
+    expect(setNotificationChannelAsync).toHaveBeenCalledWith(
+      'whenbollae-reminders',
+      expect.objectContaining({
+        name: '일정 리마인드',
+      }),
+    );
+  });
+
   it('uses the stored reminder lead time when scheduling appointment reminders', async () => {
     asyncStorageValues.set(notificationEnabledKey, 'true');
     const { scheduleAppointmentReminders, setAppNotificationReminderLead } = await import('./appNotifications');
@@ -871,7 +884,7 @@ describe('app notification registration', () => {
           mapKey: 'card-gangnam',
           fireDate: new Date('2026-06-20T09:30:00.000Z'),
           content: {
-            title: '약속 리마인드',
+            title: '일정 리마인드',
             body: '19:00 - 20:00 · 강남',
             data: { url: '/schedule', type: 'appointment_reminder', id: 'card-gangnam' },
           },
@@ -903,7 +916,7 @@ describe('app notification registration', () => {
     expect(cancelScheduledNotificationAsync).toHaveBeenCalledWith('old-reminder-id');
     expect(scheduleNotificationAsync).toHaveBeenCalledWith({
       content: {
-        title: '약속 리마인드',
+        title: '일정 리마인드',
         body: '19:00 - 20:00 · 강남',
         data: { url: '/schedule', type: 'appointment_reminder', id: 'card-gangnam' },
         sound: 'default',
@@ -1024,7 +1037,7 @@ describe('app notification registration', () => {
             mapKey: 'card-gangnam',
             fireDate: new Date('2026-06-20T09:30:00.000Z'),
             content: {
-              title: '약속 리마인드',
+              title: '일정 리마인드',
               body: '19:00 - 20:00 · 강남',
               data: { url: '/schedule', type: 'appointment_reminder', id: 'card-gangnam' },
             },

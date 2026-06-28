@@ -1,18 +1,19 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { getActiveScheduleRepository } from '@/data/scheduleRepository';
-import { getAccountScopedStorageKey } from '@/lib/accountScopedStorage';
+import { getSchedulePlannerCacheKey } from '@/data/localSchedulePlannerStorage';
 import {
-  applyManualScheduleMutations,
   buildSchedulePlannerCache,
   createLocalRecurringTodoItem,
   createLocalManualScheduleItem,
-  enqueueSchedulePlannerMutation,
+  createLocalTodoItem,
   parseSchedulePlannerCache,
+  toggleLocalTodoItem,
+  updateLocalTodoItem,
   type SchedulePlannerMutation,
 } from '@/lib/schedulePlannerState';
 import { supabase } from '@/lib/supabase';
+import { refreshEnabledNotificationsWithManualScheduleItems } from '@/hooks/useAppNotifications';
 import type {
   CreateManualScheduleInput,
   CreateRecurringTodoInput,
@@ -20,7 +21,6 @@ import type {
   DisplayScheduleItem,
   RecurringTodoCompletion,
   RecurringTodoItem,
-  SchedulePlannerRepository,
   TodoItem,
   UpdateTodoInput,
 } from '@/types/promise';
@@ -55,8 +55,6 @@ type SchedulePlannerContextValue = SchedulePlannerState & SchedulePlannerActions
 
 const SchedulePlannerContext = createContext<SchedulePlannerContextValue | null>(null);
 
-const SCHEDULE_PLANNER_CACHE_PREFIX = '@whenbollae/schedule-planner-cache/v1';
-
 const initialState: SchedulePlannerState = {
   manualScheduleItems: [],
   todos: [],
@@ -90,89 +88,6 @@ function toCachePayload(state: SchedulePlannerState) {
   };
 }
 
-async function getSchedulePlannerCacheKey() {
-  const authSession = await supabase?.auth.getSession();
-
-  return getAccountScopedStorageKey(SCHEDULE_PLANNER_CACHE_PREFIX, authSession?.data.session?.user.id ?? null);
-}
-
-interface FlushPendingMutationsResult {
-  remainingMutations: SchedulePlannerMutation[];
-  flushedMutationIds: string[];
-  localToRemoteScheduleIds: Map<string, string>;
-}
-
-async function flushPendingMutations(repository: SchedulePlannerRepository, pendingMutations: SchedulePlannerMutation[]) {
-  const localToRemoteScheduleIds = new Map<string, string>();
-  const flushedMutationIds: string[] = [];
-
-  for (let index = 0; index < pendingMutations.length; index += 1) {
-    const mutation = pendingMutations[index];
-
-    try {
-      switch (mutation.kind) {
-        case 'CREATE_MANUAL_SCHEDULE': {
-          const item = await repository.createManualScheduleItem(mutation.input);
-          localToRemoteScheduleIds.set(mutation.localId, item.id);
-          break;
-        }
-        case 'UPDATE_MANUAL_SCHEDULE': {
-          const scheduleId = localToRemoteScheduleIds.get(mutation.scheduleId) ?? mutation.scheduleId;
-          await repository.updateManualScheduleItem(scheduleId, mutation.input);
-          break;
-        }
-        case 'DELETE_MANUAL_SCHEDULE': {
-          const scheduleId = localToRemoteScheduleIds.get(mutation.scheduleId) ?? mutation.scheduleId;
-          await repository.deleteManualScheduleItem(scheduleId);
-          break;
-        }
-      }
-      flushedMutationIds.push(mutation.id);
-    } catch {
-      return {
-        remainingMutations: pendingMutations.slice(index),
-        flushedMutationIds,
-        localToRemoteScheduleIds,
-      } satisfies FlushPendingMutationsResult;
-    }
-  }
-
-  return {
-    remainingMutations: [],
-    flushedMutationIds,
-    localToRemoteScheduleIds,
-  } satisfies FlushPendingMutationsResult;
-}
-
-function remapScheduleMutationIds(
-  mutation: SchedulePlannerMutation,
-  localToRemoteScheduleIds: Map<string, string>,
-): SchedulePlannerMutation {
-  if (mutation.kind === 'CREATE_MANUAL_SCHEDULE') {
-    return mutation;
-  }
-
-  const scheduleId = localToRemoteScheduleIds.get(mutation.scheduleId);
-
-  return scheduleId ? { ...mutation, scheduleId } : mutation;
-}
-
-function mergePendingMutationsAfterFlush(
-  latestMutations: SchedulePlannerMutation[],
-  originalMutations: SchedulePlannerMutation[],
-  flushResult: FlushPendingMutationsResult,
-) {
-  if (latestMutations === originalMutations) {
-    return flushResult.remainingMutations;
-  }
-
-  const flushedMutationIdSet = new Set(flushResult.flushedMutationIds);
-
-  return latestMutations
-    .filter((mutation) => !flushedMutationIdSet.has(mutation.id))
-    .map((mutation) => remapScheduleMutationIds(mutation, flushResult.localToRemoteScheduleIds));
-}
-
 function useSchedulePlannerController(): SchedulePlannerContextValue {
   const [state, setState] = useState<SchedulePlannerState>(initialState);
   const stateRef = useRef(initialState);
@@ -196,62 +111,22 @@ function useSchedulePlannerController(): SchedulePlannerContextValue {
     [commitState],
   );
 
-  const syncWithRepository = useCallback(async () => {
+  const markLocalScheduleReady = useCallback(() => {
     const cacheKey = activeCacheKeyRef.current;
 
     if (!cacheKey) {
       return;
     }
 
-    const commitIfCurrentAccount = (nextState: SchedulePlannerState) => {
-      if (activeCacheKeyRef.current === cacheKey) {
-        commitState(nextState);
-      }
-    };
-
-    try {
-      const { persisted, repository } = await getActiveScheduleRepository();
-      const current = stateRef.current;
-      const flushResult =
-        persisted && current.pendingMutations.length > 0
-          ? await flushPendingMutations(repository, current.pendingMutations)
-          : ({
-              remainingMutations: current.pendingMutations,
-              flushedMutationIds: [],
-              localToRemoteScheduleIds: new Map<string, string>(),
-            } satisfies FlushPendingMutationsResult);
-      const [serverManualScheduleItems, todos] = await Promise.all([
-        repository.listManualScheduleItems(),
-        repository.listTodos(),
-      ]);
-      const pendingMutations = mergePendingMutationsAfterFlush(
-        stateRef.current.pendingMutations,
-        current.pendingMutations,
-        flushResult,
-      );
-      const manualScheduleItems = applyManualScheduleMutations(serverManualScheduleItems, pendingMutations);
-
-      commitIfCurrentAccount({
-        ...stateRef.current,
-        manualScheduleItems,
-        todos,
-        recurringTodos: stateRef.current.recurringTodos,
-        recurringTodoCompletions: stateRef.current.recurringTodoCompletions,
-        pendingMutations,
-        isLoading: false,
-        isMutating: false,
-        persisted: persisted && pendingMutations.length === 0,
-        syncedAt: new Date().toISOString(),
-        error: null,
-      });
-    } catch (error) {
-      commitIfCurrentAccount({
-        ...stateRef.current,
-        isLoading: false,
-        isMutating: false,
-        error: getErrorMessage(error),
-      });
-    }
+    commitState({
+      ...stateRef.current,
+      pendingMutations: [],
+      isLoading: false,
+      isMutating: false,
+      persisted: false,
+      syncedAt: stateRef.current.syncedAt ?? new Date().toISOString(),
+      error: null,
+    });
   }, [commitState]);
 
   useEffect(() => {
@@ -283,16 +158,16 @@ function useSchedulePlannerController(): SchedulePlannerContextValue {
             todos: cachedPayload.todos,
             recurringTodos: cachedPayload.recurringTodos,
             recurringTodoCompletions: cachedPayload.recurringTodoCompletions,
-            pendingMutations: cachedPayload.pendingMutations,
+            pendingMutations: [],
             isLoading: false,
             isMutating: false,
-            persisted: cachedPayload.persisted,
+            persisted: false,
             syncedAt: cachedPayload.syncedAt,
             error: null,
           });
         }
 
-        await syncWithRepository();
+        markLocalScheduleReady();
       } catch (error) {
         if (isMounted) {
           commitState({
@@ -317,174 +192,141 @@ function useSchedulePlannerController(): SchedulePlannerContextValue {
       isMounted = false;
       subscription?.unsubscribe();
     };
-  }, []);
+  }, [commitState, markLocalScheduleReady]);
 
   const createManualScheduleItem = useCallback(async (input: CreateManualScheduleInput) => {
     const localId = createLocalId('local-schedule');
     const item = createLocalManualScheduleItem(input, localId);
-    const mutation: SchedulePlannerMutation = {
-      id: createLocalId('mutation'),
-      kind: 'CREATE_MANUAL_SCHEDULE',
-      localId,
-      input,
-      createdAt: new Date().toISOString(),
-    };
 
-    updateState((current) => ({
+    const nextState = updateState((current) => ({
       ...current,
       manualScheduleItems: [item, ...current.manualScheduleItems.filter((currentItem) => currentItem.id !== item.id)],
-      pendingMutations: enqueueSchedulePlannerMutation(current.pendingMutations, mutation),
+      pendingMutations: [],
       isMutating: false,
       persisted: false,
+      syncedAt: new Date().toISOString(),
       error: null,
     }));
-    void syncWithRepository();
+    void refreshEnabledNotificationsWithManualScheduleItems(nextState.manualScheduleItems);
 
     return item;
-  }, [syncWithRepository, updateState]);
+  }, [updateState]);
 
   const updateManualScheduleItem = useCallback(async (scheduleId: string, input: CreateManualScheduleInput) => {
     const item = createLocalManualScheduleItem(input, scheduleId);
-    const mutation: SchedulePlannerMutation = {
-      id: createLocalId('mutation'),
-      kind: 'UPDATE_MANUAL_SCHEDULE',
-      scheduleId,
-      input,
-      createdAt: new Date().toISOString(),
-    };
+    const existingItem = stateRef.current.manualScheduleItems.find((currentItem) => currentItem.id === scheduleId);
 
-    updateState((current) => ({
+    if (!existingItem) {
+      throw new Error('일정을 찾지 못했어요.');
+    }
+
+    const nextState = updateState((current) => ({
       ...current,
       manualScheduleItems: current.manualScheduleItems.map((currentItem) =>
         currentItem.id === item.id ? item : currentItem,
       ),
-      pendingMutations: enqueueSchedulePlannerMutation(current.pendingMutations, mutation),
+      pendingMutations: [],
       isMutating: false,
       persisted: false,
+      syncedAt: new Date().toISOString(),
       error: null,
     }));
-    void syncWithRepository();
+    void refreshEnabledNotificationsWithManualScheduleItems(nextState.manualScheduleItems);
 
     return item;
-  }, [syncWithRepository, updateState]);
+  }, [updateState]);
 
   const deleteManualScheduleItem = useCallback(async (scheduleId: string) => {
-    const mutation: SchedulePlannerMutation = {
-      id: createLocalId('mutation'),
-      kind: 'DELETE_MANUAL_SCHEDULE',
-      scheduleId,
-      createdAt: new Date().toISOString(),
-    };
+    const existingItem = stateRef.current.manualScheduleItems.find((item) => item.id === scheduleId);
+
+    if (!existingItem) {
+      throw new Error('일정을 찾지 못했어요.');
+    }
+
+    const nextState = updateState((current) => ({
+      ...current,
+      manualScheduleItems: current.manualScheduleItems.filter((item) => item.id !== scheduleId),
+      pendingMutations: [],
+      isMutating: false,
+      persisted: false,
+      syncedAt: new Date().toISOString(),
+      error: null,
+    }));
+    void refreshEnabledNotificationsWithManualScheduleItems(nextState.manualScheduleItems);
+  }, [updateState]);
+
+  const createTodo = useCallback(async (input: CreateTodoInput) => {
+    const todo = createLocalTodoItem(input, createLocalId('local-todo'));
 
     updateState((current) => ({
       ...current,
-      manualScheduleItems: current.manualScheduleItems.filter((item) => item.id !== scheduleId),
-      pendingMutations: enqueueSchedulePlannerMutation(current.pendingMutations, mutation),
+      todos: [todo, ...current.todos.filter((currentTodo) => currentTodo.id !== todo.id)],
       isMutating: false,
       persisted: false,
+      syncedAt: new Date().toISOString(),
       error: null,
     }));
-    void syncWithRepository();
-  }, [syncWithRepository, updateState]);
 
-  const createTodo = useCallback(async (input: CreateTodoInput) => {
-    updateState((current) => ({ ...current, isMutating: true, error: null }));
-
-    try {
-      const { persisted, repository } = await getActiveScheduleRepository();
-      const todo = await repository.createTodo(input);
-      updateState((current) => ({
-        ...current,
-        todos: [todo, ...current.todos.filter((currentTodo) => currentTodo.id !== todo.id)],
-        isMutating: false,
-        persisted,
-        syncedAt: new Date().toISOString(),
-        error: null,
-      }));
-      return todo;
-    } catch (error) {
-      updateState((current) => ({ ...current, isMutating: false, error: getErrorMessage(error) }));
-      throw error;
-    }
+    return todo;
   }, [updateState]);
 
   const toggleTodo = useCallback(async (todoId: string) => {
-    const previousTodos = stateRef.current.todos;
-    const optimisticTodo = previousTodos.find((todo) => todo.id === todoId);
+    const todo = stateRef.current.todos.find((currentTodo) => currentTodo.id === todoId);
 
-    if (!optimisticTodo) {
+    if (!todo) {
+      throw new Error('할일을 찾지 못했어요.');
+    }
+
+    const toggledTodo = toggleLocalTodoItem(todo);
+
+    updateState((current) => ({
+      ...current,
+      todos: current.todos.map((currentTodo) => (currentTodo.id === todoId ? toggledTodo : currentTodo)),
+      isMutating: false,
+      persisted: false,
+      syncedAt: new Date().toISOString(),
+      error: null,
+    }));
+
+    return toggledTodo;
+  }, [updateState]);
+
+  const updateTodo = useCallback(async (todoId: string, input: UpdateTodoInput) => {
+    const todo = stateRef.current.todos.find((currentTodo) => currentTodo.id === todoId);
+
+    if (!todo) {
+      throw new Error('할일을 찾지 못했어요.');
+    }
+
+    const updatedTodo = updateLocalTodoItem(todo, input);
+
+    updateState((current) => ({
+      ...current,
+      todos: current.todos.map((currentTodo) => (currentTodo.id === todoId ? updatedTodo : currentTodo)),
+      isMutating: false,
+      persisted: false,
+      syncedAt: new Date().toISOString(),
+      error: null,
+    }));
+
+    return updatedTodo;
+  }, [updateState]);
+
+  const deleteTodo = useCallback(async (todoId: string) => {
+    const todo = stateRef.current.todos.find((currentTodo) => currentTodo.id === todoId);
+
+    if (!todo) {
       throw new Error('할일을 찾지 못했어요.');
     }
 
     updateState((current) => ({
       ...current,
-      todos: current.todos.map((todo) => (todo.id === todoId ? { ...todo, done: !todo.done } : todo)),
+      todos: current.todos.filter((currentTodo) => currentTodo.id !== todoId),
       isMutating: false,
+      persisted: false,
+      syncedAt: new Date().toISOString(),
       error: null,
     }));
-
-    try {
-      const { persisted, repository } = await getActiveScheduleRepository();
-      const todo = await repository.toggleTodo(todoId);
-      updateState((current) => ({
-        ...current,
-        todos: current.todos.map((currentTodo) => (currentTodo.id === todo.id ? todo : currentTodo)),
-        isMutating: false,
-        persisted,
-        syncedAt: new Date().toISOString(),
-        error: null,
-      }));
-      return todo;
-    } catch (error) {
-      updateState((current) => ({
-        ...current,
-        todos: previousTodos,
-        isMutating: false,
-        error: getErrorMessage(error),
-      }));
-      throw error;
-    }
-  }, [updateState]);
-
-  const updateTodo = useCallback(async (todoId: string, input: UpdateTodoInput) => {
-    updateState((current) => ({ ...current, isMutating: true, error: null }));
-
-    try {
-      const { persisted, repository } = await getActiveScheduleRepository();
-      const todo = await repository.updateTodo(todoId, input);
-      updateState((current) => ({
-        ...current,
-        todos: current.todos.map((currentTodo) => (currentTodo.id === todo.id ? todo : currentTodo)),
-        isMutating: false,
-        persisted,
-        syncedAt: new Date().toISOString(),
-        error: null,
-      }));
-      return todo;
-    } catch (error) {
-      updateState((current) => ({ ...current, isMutating: false, error: getErrorMessage(error) }));
-      throw error;
-    }
-  }, [updateState]);
-
-  const deleteTodo = useCallback(async (todoId: string) => {
-    updateState((current) => ({ ...current, isMutating: true, error: null }));
-
-    try {
-      const { persisted, repository } = await getActiveScheduleRepository();
-      await repository.deleteTodo(todoId);
-      updateState((current) => ({
-        ...current,
-        todos: current.todos.filter((todo) => todo.id !== todoId),
-        isMutating: false,
-        persisted,
-        syncedAt: new Date().toISOString(),
-        error: null,
-      }));
-    } catch (error) {
-      updateState((current) => ({ ...current, isMutating: false, error: getErrorMessage(error) }));
-      throw error;
-    }
   }, [updateState]);
 
   const createRecurringTodo = useCallback((input: CreateRecurringTodoInput) => {

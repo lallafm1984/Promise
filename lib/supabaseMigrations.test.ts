@@ -143,6 +143,12 @@ const notificationWorkerCronMigrationPath = join(
   'migrations',
   '20260624154500_notification_worker_cron.sql',
 );
+const localOnlyScheduleCleanupMigrationPath = join(
+  process.cwd(),
+  'supabase',
+  'migrations',
+  '20260626093000_drop_local_only_todos.sql',
+);
 const notificationWorkerPath = join(
   process.cwd(),
   'supabase',
@@ -468,6 +474,16 @@ describe('Supabase notification migrations', () => {
     expect(sql).not.toContain('status in (');
     expect(sql).toContain('revoke all on function public.cleanup_expired_appointment_cards() from anon;');
     expect(sql).toContain('grant execute on function public.cleanup_expired_appointment_cards() to service_role;');
+  });
+
+  it('drops the unused server todos table after direct schedule data became local-only', () => {
+    expect(existsSync(localOnlyScheduleCleanupMigrationPath)).toBe(true);
+
+    const sql = readFileSync(localOnlyScheduleCleanupMigrationPath, 'utf8');
+
+    expect(sql).toContain('delete from public.appointments');
+    expect(sql).toContain('where card_id is null');
+    expect(sql).toContain('drop table if exists public.todos cascade;');
   });
 
   it('generates short public profile handles for friend sharing', () => {

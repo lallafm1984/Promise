@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import {
   AtSign,
   BellRing,
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Modal, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 
 import { ActionButton, AppScreen, Card, SectionHeader } from '@/components/ui';
 import { compactHero, modalOverlay, palette, radius, spacing } from '@/constants/theme';
@@ -45,16 +46,25 @@ export default function ProfileScreen() {
   const [profileEditError, setProfileEditError] = useState<string | null>(null);
   const [savedProfile, setSavedProfile] = useState(profile);
   const [isAuthWorking, setIsAuthWorking] = useState(false);
+  const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);
   const currentProfile = resolveDisplayProfile(profile, savedProfile);
   const displayName = currentProfile?.displayName ?? user?.email ?? '내 프로필';
   const handle = currentProfile?.handle ?? 'handle';
   const avatarLabel = displayName.slice(0, 1);
+
+  useFocusEffect(
+    useCallback(() => {
+      void notificationSettings.reload();
+    }, [notificationSettings.reload]),
+  );
 
   async function handleSignOut() {
     setIsAuthWorking(true);
 
     try {
       await signOutFromSupabase();
+      setLogoutConfirmVisible(false);
+      setNoticeTitle('로그아웃 완료');
       setNotice('로그아웃했어요.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '로그아웃하지 못했어요.');
@@ -130,6 +140,14 @@ export default function ProfileScreen() {
 
     setProfileEditVisible(false);
     setProfileEditError(null);
+  }
+
+  function openLogoutConfirm() {
+    if (isAuthWorking) {
+      return;
+    }
+
+    setLogoutConfirmVisible(true);
   }
 
   async function handleSaveProfile() {
@@ -258,7 +276,7 @@ export default function ProfileScreen() {
               category="reminders"
               disabled={notificationSettings.isWorking}
               enabled={notificationSettings.preferences.categories.reminders}
-              label="약속 리마인드"
+              label="일정 리마인드"
               onToggle={notificationSettings.setCategoryEnabled}
             />
           </View>
@@ -287,7 +305,7 @@ export default function ProfileScreen() {
               icon={<LogOut size={17} color={palette.onLight} />}
               disabled={isAuthWorking}
               fullWidth
-              onPress={() => void handleSignOut()}
+              onPress={openLogoutConfirm}
             />
           </View>
         ) : null}
@@ -309,6 +327,15 @@ export default function ProfileScreen() {
         onCopyId={() => void handleCopyProfileHandle()}
         onShare={() => void handleShareProfile()}
       />
+      <ConfirmActionModal
+        confirmLabel={isAuthWorking ? '로그아웃 중' : '로그아웃'}
+        isWorking={isAuthWorking}
+        message="현재 계정에서 로그아웃합니다."
+        title="로그아웃할까요?"
+        visible={logoutConfirmVisible}
+        onClose={() => setLogoutConfirmVisible(false)}
+        onConfirm={() => void handleSignOut()}
+      />
       <NoticeModal
         message={notice}
         title={noticeTitle}
@@ -318,6 +345,55 @@ export default function ProfileScreen() {
         }}
       />
     </>
+  );
+}
+
+function ConfirmActionModal({
+  confirmLabel,
+  isWorking,
+  message,
+  title,
+  visible,
+  onClose,
+  onConfirm,
+}: {
+  confirmLabel: string;
+  isWorking: boolean;
+  message: string;
+  title: string;
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
+      <Pressable disabled={isWorking} style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalPressGuard} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.modalPanel}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.cardKicker}>확인</Text>
+                <Text style={styles.modalTitle}>{title}</Text>
+              </View>
+              <Pressable
+                accessibilityLabel="확인 창 닫기"
+                accessibilityRole="button"
+                disabled={isWorking}
+                hitSlop={8}
+                onPress={onClose}
+                style={({ pressed }) => [styles.modalCloseButton, pressed && !isWorking && styles.pressed]}>
+                <X size={19} color={palette.primaryDeep} />
+              </Pressable>
+            </View>
+            <Text style={styles.modalBody}>{message}</Text>
+            <View style={styles.modalActions}>
+              <ActionButton label="취소" variant="secondary" disabled={isWorking} fullWidth onPress={onClose} />
+              <ActionButton label={confirmLabel} variant="danger" disabled={isWorking} fullWidth onPress={onConfirm} />
+            </View>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -998,7 +1074,7 @@ const styles = StyleSheet.create({
   },
   reminderLeadRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     gap: spacing.sm,
   },
   reminderLeadButton: {
@@ -1007,19 +1083,20 @@ const styles = StyleSheet.create({
     borderColor: palette.lineStrong,
     borderRadius: radius.pill,
     borderWidth: 1.5,
-    flexGrow: 1,
+    flex: 1,
     justifyContent: 'center',
     minHeight: 42,
-    minWidth: 96,
-    paddingHorizontal: spacing.md,
+    minWidth: 0,
+    paddingHorizontal: spacing.xs,
   },
   selectedReminderLeadButton: {
     backgroundColor: palette.amberSoft,
   },
   reminderLeadButtonText: {
     color: palette.inkMuted,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '900',
+    textAlign: 'center',
   },
   selectedReminderLeadButtonText: {
     color: palette.primaryDeep,

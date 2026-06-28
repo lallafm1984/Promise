@@ -2,8 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 
+import { readSchedulePlannerCache } from '@/data/localSchedulePlannerStorage';
 import { getActivePromiseRepository } from '@/data/promiseRepository';
-import { getActiveScheduleRepository } from '@/data/scheduleRepository';
 import {
   checkSocialNotifications,
   configureAppNotifications,
@@ -27,29 +27,44 @@ import {
   type AppNotificationPreferences,
 } from '@/lib/appNotifications';
 import type { AppNotificationPermissionStatus } from '@/lib/notificationStatus';
-import type { ReminderLead } from '@/types/promise';
+import type { ReminderLead, ScheduleItem } from '@/types/promise';
 import { supabase } from '@/lib/supabase';
 
 const INITIAL_NOTIFICATION_PERMISSION_PROMPT_KEY = 'whenbollae:notifications:initial-permission-prompt-seen:v2';
+let enabledNotificationRefreshQueue: Promise<void> = Promise.resolve();
 
-async function refreshEnabledNotifications() {
+async function refreshEnabledNotificationsWithManualScheduleItemsOnce(manualScheduleItems: ScheduleItem[]) {
   if (!(await ensureAppNotificationEnabledForGrantedPermission())) {
     return;
   }
 
   const { repository } = await getActivePromiseRepository();
-  const { repository: scheduleRepository } = await getActiveScheduleRepository();
-  const [, profile, cardScheduleItems, manualScheduleItems] = await Promise.all([
+  const [, profile, cardScheduleItems] = await Promise.all([
     syncPushTokenRegistration(),
     repository.getHostProfile(),
     repository.listScheduleItems(),
-    scheduleRepository.listManualScheduleItems(),
   ]);
 
   await Promise.all([
     checkSocialNotifications(),
     scheduleAppointmentReminders(profile, [...cardScheduleItems, ...manualScheduleItems]),
   ]);
+}
+
+export async function refreshEnabledNotificationsWithManualScheduleItems(manualScheduleItems: ScheduleItem[]) {
+  const nextRefresh = enabledNotificationRefreshQueue.then(
+    () => refreshEnabledNotificationsWithManualScheduleItemsOnce(manualScheduleItems),
+    () => refreshEnabledNotificationsWithManualScheduleItemsOnce(manualScheduleItems),
+  );
+  enabledNotificationRefreshQueue = nextRefresh.catch(() => undefined);
+
+  return nextRefresh;
+}
+
+async function refreshEnabledNotifications() {
+  const localScheduleCache = await readSchedulePlannerCache();
+
+  await refreshEnabledNotificationsWithManualScheduleItems(localScheduleCache?.manualScheduleItems ?? []);
 }
 
 async function refreshSocialNotificationsImmediately() {

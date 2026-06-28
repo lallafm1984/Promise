@@ -42,10 +42,21 @@ npx supabase db push --linked
 - `appointment_candidates`: candidate date/time options per card.
 - `appointment_respondents`: respondent identity per card.
 - `appointment_candidate_responses`: candidate-level yes/maybe/no/unanswered votes.
-- `appointments`: confirmed or manually added calendar items. Manual items use `card_id = null` and keep their UI color in `color_key`.
-- `todos`: user-owned checklist items.
+- `appointments`: confirmed card calendar items. Legacy manually added rows with `card_id = null` are removed by `20260626093000_drop_local_only_todos.sql`; the current app keeps directly added schedules local-only in `AsyncStorage`.
 - `card_recipients`: app-friend delivery records for a card.
 - `notification_tokens`: Expo/FCM push tokens.
+- `mobile_sync_versions`: per-user realtime invalidation for friend/card/schedule data that is still Supabase-backed.
+- `public_response_rate_limits`: server-side rate limit counters for public web responses.
+- `notification_events`: push notification outbox claimed by the notification worker.
+
+## Local-Only Schedule Data Boundary
+
+The current mobile app does not store directly added schedules or todos in Supabase. These are device-local, account-scoped records under `@whenbollae/schedule-planner-cache/v1`.
+
+- Friend/card-related schedules remain Supabase-backed through `appointment_cards`, `appointment_candidates`, `appointment_respondents`, `appointment_candidate_responses`, `card_recipients`, and card-linked `appointments`.
+- Directly added schedule items are local-only and should not write `appointments` rows with `card_id = null`.
+- One-time todos, recurring todos, and recurring todo completions are local-only and should not write `public.todos`.
+- `20260626093000_drop_local_only_todos.sql` removes legacy manual `appointments` rows and drops `public.todos`.
 
 ## Access Matrix
 
@@ -58,10 +69,12 @@ npx supabase db push --linked
 | `appointment_candidates` | none | CRUD own card candidates | read received card candidates | full |
 | `appointment_respondents` | none | read respondents on own cards | create/read/update own respondent row | full |
 | `appointment_candidate_responses` | none | read responses on own cards | create/read/update own responses | full |
-| `appointments` | none | CRUD own appointments | none | full |
-| `todos` | none | CRUD own todos | none | full |
+| `appointments` | none | CRUD own card-linked appointments | none | full |
 | `card_recipients` | none | manage recipients for own cards | read/update own delivery status | full |
 | `notification_tokens` | none | CRUD own tokens | none | full |
+| `mobile_sync_versions` | none | read own sync version | none | full |
+| `public_response_rate_limits` | none | none | none | full |
+| `notification_events` | none | none | none | full |
 
 ## Public Web Response Boundary
 

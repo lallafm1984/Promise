@@ -373,7 +373,7 @@ export async function configureAppNotifications() {
       lightColor: '#F97940',
     });
     await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
-      name: '약속 리마인드',
+      name: '일정 리마인드',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 320, 180, 320],
       lightColor: '#77C9C5',

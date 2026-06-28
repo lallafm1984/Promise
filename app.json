@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.lim.whenbollae",
-      "versionCode": 6,
+      "versionCode": 9,
       "permissions": [
         "SCHEDULE_EXACT_ALARM"
       ],

@@ -141,7 +141,7 @@ export function buildCardConfirmedNotification(card: PromiseCard): NotificationC
 
 export function buildReminderNotification(input: ReminderNotificationInput): NotificationContent {
   return {
-    title: '약속 리마인드',
+    title: '일정 리마인드',
     body: `${input.timeLabel} · ${input.location}`,
     data: { url: '/schedule', type: 'appointment_reminder', id: input.cardId },
   };

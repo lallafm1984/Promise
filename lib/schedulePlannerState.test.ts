@@ -7,9 +7,12 @@ import {
   buildSchedulePlannerCache,
   createLocalRecurringTodoItem,
   createLocalManualScheduleItem,
+  createLocalTodoItem,
   enqueueSchedulePlannerMutation,
   getTodosForDate,
   parseSchedulePlannerCache,
+  toggleLocalTodoItem,
+  updateLocalTodoItem,
   type SchedulePlannerMutation,
 } from './schedulePlannerState';
 
@@ -72,7 +75,7 @@ describe('schedule planner state', () => {
     });
 
     expect(parseSchedulePlannerCache(cache)).toEqual({
-      manualScheduleItems: [serverSchedule],
+      manualScheduleItems: [{ ...serverSchedule, status: 'REMINDER_ON' }],
       todos: [],
       recurringTodos: [recurringTodo],
       recurringTodoCompletions: [{ recurringTodoId: recurringTodo.id, dateKey: '2026-06-22', done: true }],
@@ -148,6 +151,43 @@ describe('schedule planner state', () => {
     expect(getTodosForDate([completedTodo, openTodo], [], [], '2026-06-22')).toEqual([completedTodo, openTodo]);
   });
 
+  it('creates and updates one-time todos locally without changing completion state', () => {
+    const todo = createLocalTodoItem(
+      {
+        dateKey: '2026-06-22',
+        title: '  장보기  ',
+        detail: '',
+        colorKey: 'coral',
+      },
+      'local-todo-1',
+    );
+    const toggledTodo = toggleLocalTodoItem(todo);
+
+    expect(todo).toEqual({
+      id: 'local-todo-1',
+      dateKey: '2026-06-22',
+      title: '장보기',
+      detail: '오늘 중',
+      done: false,
+      colorKey: 'coral',
+    });
+    expect(
+      updateLocalTodoItem(toggledTodo, {
+        dateKey: '2026-06-23',
+        title: '세탁소',
+        detail: '퇴근 후',
+        colorKey: 'sky',
+      }),
+    ).toEqual({
+      id: 'local-todo-1',
+      dateKey: '2026-06-23',
+      title: '세탁소',
+      detail: '퇴근 후',
+      done: true,
+      colorKey: 'sky',
+    });
+  });
+
   it('creates a local schedule item from user input', () => {
     expect(createLocalManualScheduleItem(scheduleInput, 'local-schedule-1')).toMatchObject({
       id: 'local-schedule-1',
@@ -156,6 +196,7 @@ describe('schedule planner state', () => {
       location: '성수',
       dateLabel: '6월 20일',
       timeLabel: '19:00',
+      status: 'REMINDER_ON',
       source: 'MANUAL',
       colorKey: 'sky',
     });

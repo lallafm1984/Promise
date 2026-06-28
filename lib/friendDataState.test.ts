@@ -19,7 +19,7 @@ const friend: AppFriend = {
   handle: 'jiu',
   avatarLabel: '지',
   color: '#BFE8FF',
-  lastActiveLabel: '계정 동기화됨',
+  lastActiveLabel: '',
 };
 
 const request: FriendRequest = {

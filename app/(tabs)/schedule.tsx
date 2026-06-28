@@ -209,7 +209,6 @@ export default function ScheduleScreen() {
     recurringTodoCompletions,
     isLoading: plannerLoading,
     isMutating,
-    error: plannerError,
     createManualScheduleItem,
     updateManualScheduleItem,
     deleteManualScheduleItem,
@@ -1022,7 +1021,6 @@ export default function ScheduleScreen() {
 
       <Animated.View style={[styles.contentStack, contentAnimatedStyle]}>
         {plannerLoading ? <Text style={styles.syncText}>일정 동기화 중...</Text> : null}
-        {plannerError ? <Text style={styles.errorText}>{plannerError}</Text> : null}
         {activeMode === 'SCHEDULE' ? (
           <SchedulePanel
             isLoading={plannerLoading}
@@ -1866,7 +1864,7 @@ function ComposerModal({
             onPress={onClose}
             style={styles.modalBackdropTouchable}
           />
-          <View style={styles.modalPressGuard}>
+          <View style={[styles.modalPressGuard, styles.scheduleComposerPressGuard]}>
             <View style={[styles.modalPanel, styles.scheduleComposerPanel]}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleGroup}>
@@ -2458,17 +2456,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
   },
-  errorText: {
-    backgroundColor: palette.coralSoft,
-    borderColor: palette.lineStrong,
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    color: palette.primaryDeep,
-    fontSize: 12,
-    fontWeight: '900',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 8,
-  },
   addButton: {
     alignItems: 'center',
     alignSelf: 'stretch',
@@ -2850,20 +2837,25 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   scheduleComposerPanel: {
+    alignSelf: 'stretch',
     gap: spacing.xs,
-    maxHeight: '96%',
-    padding: spacing.xs,
+    maxHeight: '86%',
   },
   scheduleComposerKeyboardAvoider: {
     flex: 1,
   },
+  scheduleComposerPressGuard: {
+    flex: 1,
+    justifyContent: 'center',
+  },
   scheduleComposerFormScroll: {
+    flexGrow: 0,
     flexShrink: 1,
     minHeight: 0,
     width: '100%',
   },
   scheduleComposerForm: {
-    flexGrow: 1,
+    paddingBottom: spacing.xs,
     width: '100%',
   },
   scheduleComposerFooter: {
